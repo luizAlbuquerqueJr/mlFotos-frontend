@@ -31,7 +31,7 @@ const Header = () => {
       className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between px-6 md:px-12 lg:px-16 py-2 bg-background/20 backdrop-blur-sm border-b border-border/5"
     >
       <a href="#home" className="text-lg md:text-xl tracking-[0.15em] uppercase font-medium" style={{ fontFamily: "var(--font-serif)" }}>
-        Monica Lima
+        Mônica Lima
       </a>
 
       {/* Desktop nav */}
