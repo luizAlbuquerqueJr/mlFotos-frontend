@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { AnimatePresence } from "framer-motion";
 import Header from "@/components/Header";
 import HeroCarousel from "@/components/HeroCarousel";
@@ -6,19 +6,34 @@ import AlbumsSection from "@/components/AlbumsSection";
 import AboutSection from "@/components/AboutSection";
 import ContactSection from "@/components/ContactSection";
 import LoadingScreen from "@/components/LoadingScreen";
-import { fetchSiteData, type SiteData } from "@/lib/api";
+import { callFinderIp, fetchSiteData, notifyAccess, type SiteData } from "@/lib/api";
 
 const FOLDER_URL = "https://drive.google.com/drive/folders/1uDfgMQAKuW2oeSgPBj19ZhpcqnIhoIs1?usp=sharing";
 
 const Index = () => {
   const [loading, setLoading] = useState(true);
   const [siteData, setSiteData] = useState<SiteData | null>(null);
+  const didRunEntryEffects = useRef(false);
 
   useEffect(() => {
     fetchSiteData(FOLDER_URL)
       .then((data) => setSiteData(data))
       .catch((err) => console.error("Error fetching site data:", err))
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (didRunEntryEffects.current) return;
+    didRunEntryEffects.current = true;
+
+    callFinderIp().catch((err) => console.error("Error calling finder-ip:", err));
+
+    const key = "notified_access_v1";
+    if (sessionStorage.getItem(key) === "1") return;
+    sessionStorage.setItem(key, "1");
+
+    notifyAccess(window.location.pathname)
+      .catch((err) => console.error("Error notifying access:", err));
   }, []);
 
   return (
