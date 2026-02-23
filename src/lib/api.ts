@@ -1,7 +1,6 @@
 const API_URL = "https://ygjosyxbfdqfkcqmhqva.supabase.co/functions/v1/fotografia-molu";
 const API_KEY = "sb_publishable_ccwkOvXWvMOXdYtje92uJg_2G4Dc9_p";
 const NOTIFY_URL = "https://ygjosyxbfdqfkcqmhqva.supabase.co/functions/v1/notify-access";
-const FINDER_IP_URL = "https://ygjosyxbfdqfkcqmhqva.supabase.co/functions/v1/finder-ip";
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? API_KEY;
 
 export interface FetchedPhoto {
@@ -125,22 +124,5 @@ export async function notifyAccess(path: string): Promise<void> {
 
   if (!response.ok) {
     throw new Error(`Failed to notify access: ${response.status}`);
-  }
-}
-
-export async function callFinderIp(): Promise<void> {
-  const response = await fetch(FINDER_IP_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
-      "apikey": SUPABASE_ANON_KEY,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ name: "Functions" }),
-    mode: "cors",
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to call finder-ip: ${response.status}`);
   }
 }

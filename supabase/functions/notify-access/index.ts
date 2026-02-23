@@ -12,6 +12,15 @@ if (!deno) {
 }
 
 function getClientIp(req: Request): string | null {
+  const forwarded = req.headers.get("forwarded");
+  if (forwarded) {
+    const match = forwarded.match(/for=(?:"?)(\[[^\]]+\]|[^;,"]+)/i);
+    if (match?.[1]) {
+      const parsed = sanitizeIp(match[1]);
+      if (parsed) return parsed;
+    }
+  }
+
   const raw =
     req.headers.get("cf-connecting-ip") ??
     req.headers.get("x-forwarded-for") ??
@@ -19,16 +28,26 @@ function getClientIp(req: Request): string | null {
 
   if (!raw) return null;
   const first = raw.split(",")[0]?.trim();
-  return first || null;
+  return first ? sanitizeIp(first) : null;
 }
 
 function getForwardedForChain(req: Request): string[] {
   const xff = req.headers.get("x-forwarded-for");
-  if (!xff) return [];
-  return xff
+  const fromXff = !xff
+    ? []
+    : xff
     .split(",")
-    .map((s) => s.trim())
+    .map((s) => sanitizeIp(s.trim()))
     .filter(Boolean);
+
+  const forwarded = req.headers.get("forwarded");
+  const fromForwarded = !forwarded
+    ? []
+    : [...forwarded.matchAll(/for=(?:"?)(\[[^\]]+\]|[^;,"]+)/gi)]
+        .map((m) => sanitizeIp((m[1] ?? "").trim()))
+        .filter(Boolean);
+
+  return [...fromXff, ...fromForwarded];
 }
 
 function pickBestPublicIp(candidates: string[]): string | null {
@@ -39,14 +58,22 @@ function pickBestPublicIp(candidates: string[]): string | null {
 }
 
 function sanitizeIp(input: string): string {
-  const s = input.trim();
+  let s = input.trim();
   if (!s) return s;
+
+  if (s.startsWith('"') && s.endsWith('"')) {
+    s = s.slice(1, -1).trim();
+  }
 
   const bracket = s.match(/^\[([^\]]+)\](?::\d+)?$/);
   if (bracket) return bracket[1];
 
   const ipv4Port = s.match(/^((?:\d{1,3}\.){3}\d{1,3}):\d+$/);
   if (ipv4Port) return ipv4Port[1];
+
+  if (s.startsWith("::ffff:")) {
+    return s.slice(7);
+  }
 
   return s;
 }

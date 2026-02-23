@@ -6,7 +6,7 @@ import AlbumsSection from "@/components/AlbumsSection";
 import AboutSection from "@/components/AboutSection";
 import ContactSection from "@/components/ContactSection";
 import LoadingScreen from "@/components/LoadingScreen";
-import { callFinderIp, fetchSiteData, notifyAccess, type SiteData } from "@/lib/api";
+import { fetchSiteData, notifyAccess, type SiteData } from "@/lib/api";
 
 const FOLDER_URL = "https://drive.google.com/drive/folders/1uDfgMQAKuW2oeSgPBj19ZhpcqnIhoIs1?usp=sharing";
 
@@ -26,12 +26,6 @@ const Index = () => {
     if (didRunEntryEffects.current) return;
     didRunEntryEffects.current = true;
 
-    callFinderIp().catch((err) => console.error("Error calling finder-ip:", err));
-
-    const key = "notified_access_v1";
-    if (sessionStorage.getItem(key) === "1") return;
-    sessionStorage.setItem(key, "1");
-
     notifyAccess(window.location.pathname)
       .catch((err) => console.error("Error notifying access:", err));
   }, []);
@@ -43,7 +37,7 @@ const Index = () => {
       </AnimatePresence>
 
       {!loading && siteData && (
-        <main className="min-h-screen bg-background">
+        <main className="min-h-screen bg-background w-full lg:max-w-[800px] lg:mx-auto">
           <Header />
           <HeroCarousel slides={siteData.homePhotos.map(p => p.src)} />
           <AlbumsSection albums={siteData.albums} />
