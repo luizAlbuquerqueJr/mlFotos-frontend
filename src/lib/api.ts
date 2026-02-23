@@ -3,6 +3,11 @@ const API_KEY = "sb_publishable_ccwkOvXWvMOXdYtje92uJg_2G4Dc9_p";
 const NOTIFY_URL = "https://ygjosyxbfdqfkcqmhqva.supabase.co/functions/v1/notify-access";
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? API_KEY;
 
+interface ClientGeo {
+  ip: string;
+  location: string | null;
+}
+
 export interface FetchedPhoto {
   src: string;
   alt: string;
@@ -31,6 +36,62 @@ function extractIdFromUrl(url: string): string {
 function toEmbedUrl(driveUrl: string): string {
   const id = extractIdFromUrl(driveUrl);
   return id ? `https://lh3.googleusercontent.com/d/${id}=s1920` : driveUrl;
+}
+
+function formatLocation(city: string, region: string, country: string): string | null {
+  const parts = [city, region, country].map((s) => s.trim()).filter(Boolean);
+  return parts.length ? parts.join(", ") : null;
+}
+
+async function lookupGeoFromIpApi(): Promise<ClientGeo | null> {
+  const res = await fetch("https://ipapi.co/json/", {
+    headers: { "Accept": "application/json" },
+  });
+
+  if (!res.ok) return null;
+  const data = (await res.json()) as Record<string, unknown>;
+
+  const ip = typeof data.ip === "string" ? data.ip : "unknown";
+  const city = typeof data.city === "string" ? data.city : "";
+  const region = typeof data.region === "string" ? data.region : "";
+  const country = typeof data.country_name === "string" ? data.country_name : "";
+
+  return { ip, location: formatLocation(city, region, country) };
+}
+
+async function lookupGeoFromIpWho(): Promise<ClientGeo | null> {
+  const res = await fetch("https://ipwho.is/", {
+    headers: { "Accept": "application/json" },
+  });
+
+  if (!res.ok) return null;
+  const data = (await res.json()) as Record<string, unknown>;
+  if (data.success === false) return null;
+
+  const ip = typeof data.ip === "string" ? data.ip : "unknown";
+  const city = typeof data.city === "string" ? data.city : "";
+  const region = typeof data.region === "string" ? data.region : "";
+  const country = typeof data.country === "string" ? data.country : "";
+
+  return { ip, location: formatLocation(city, region, country) };
+}
+
+async function getClientGeo(): Promise<ClientGeo> {
+  try {
+    const fromIpApi = await lookupGeoFromIpApi();
+    if (fromIpApi) return fromIpApi;
+  } catch {
+    // ignore
+  }
+
+  try {
+    const fromIpWho = await lookupGeoFromIpWho();
+    if (fromIpWho) return fromIpWho;
+  } catch {
+    // ignore
+  }
+
+  return { ip: "unknown", location: null };
 }
 
 export async function fetchSiteData(folderUrl: string): Promise<SiteData> {
@@ -111,6 +172,11 @@ export async function fetchSiteData(folderUrl: string): Promise<SiteData> {
 }
 
 export async function notifyAccess(path: string): Promise<void> {
+  const { ip, location } = await getClientGeo();
+  const ua = navigator.userAgent ?? "unknown";
+  const locationLine = location ? `\nlocal: ${location}` : "";
+  const text = `📍 Acesso no site\npath: ${path}${locationLine}\nip: ${ip}\nua: ${ua}`;
+
   const response = await fetch(NOTIFY_URL, {
     method: "POST",
     headers: {
@@ -118,7 +184,7 @@ export async function notifyAccess(path: string): Promise<void> {
       "Content-Type": "application/json",
       "apikey": SUPABASE_ANON_KEY,
     },
-    body: JSON.stringify({ path }),
+    body: JSON.stringify({ text }),
     mode: "cors",
   });
 
