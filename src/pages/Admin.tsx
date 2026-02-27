@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import {
+  buildManifest,
   createFolder,
   deleteFile,
   deleteFolder,
@@ -52,6 +53,25 @@ const Admin = () => {
     const data = await listManagerPath(currentPath);
     setFolders(data.folders);
     setFiles(data.files);
+  };
+
+  const handleDeploy = async () => {
+    setBusy(true);
+    try {
+      const url = await buildManifest();
+      toast({
+        title: "Deploy concluído",
+        description: url,
+      });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Erro no deploy",
+        description: error instanceof Error ? error.message : "Falha ao gerar manifest.",
+      });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleUploadFiles = async (pickedFiles: File[]) => {
@@ -191,9 +211,14 @@ const Admin = () => {
         <header className="space-y-2">
           <p className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Painel administrativo</p>
           <h1 className="text-3xl" style={{ fontFamily: "var(--font-serif)" }}>Gerenciador de arquivos</h1>
-          <Button asChild variant="link" className="px-0">
-            <Link to="/">Voltar para o site</Link>
-          </Button>
+          <div className="flex flex-wrap items-center gap-4">
+            <Button asChild variant="link" className="px-0">
+              <Link to="/">Voltar para o site</Link>
+            </Button>
+            <Button variant="outline" disabled={busy} onClick={handleDeploy}>
+              {busy ? "Processando..." : "Deploy"}
+            </Button>
+          </div>
         </header>
 
         <section className="rounded-lg border border-border/60 bg-card p-5 space-y-4">

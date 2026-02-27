@@ -6,16 +6,15 @@ function readEnvUrl(value: unknown): string | undefined {
   return trimmed.length ? trimmed : undefined;
 }
 
-const STORAGE_LIST_URL =
-  readEnvUrl(import.meta.env.VITE_STORAGE_LIST_URL) ??
-  (import.meta.env.PROD
-    ? "https://us-central1-fotografia-488219.cloudfunctions.net/storage-list"
-    : "http://localhost:8082");
 const STORAGE_UPLOAD_URL =
   readEnvUrl(import.meta.env.VITE_STORAGE_UPLOAD_URL) ??
   (import.meta.env.PROD
     ? "https://us-central1-fotografia-488219.cloudfunctions.net/storage-upload"
     : "http://localhost:8081");
+
+const SITE_MANIFEST_URL =
+  readEnvUrl(import.meta.env.VITE_SITE_MANIFEST_URL) ??
+  "https://storage.googleapis.com/fotos-monica-lima/site-manifest.json";
 const NOTIFY_URL = `${SUPABASE_PROJECT_URL}/functions/v1/notify-access`;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? API_KEY;
 
@@ -222,11 +221,7 @@ function parseStorageListPayload(payload: unknown): SiteData {
 }
 
 export async function fetchSiteData(): Promise<SiteData> {
-  const response = await fetch(STORAGE_LIST_URL, {
-    method: "GET",
-    headers: { "Content-Type": "application/json" },
-    mode: "cors",
-  });
+  const response = await fetch(SITE_MANIFEST_URL, { method: "GET" });
 
   if (!response.ok) {
     throw new Error(`Failed to fetch photos: ${response.status}`);
@@ -236,7 +231,7 @@ export async function fetchSiteData(): Promise<SiteData> {
   if (!contentType.includes("application/json")) {
     const details = await response.text();
     throw new Error(
-      `Resposta inválida do servidor (esperado JSON) em ${STORAGE_LIST_URL}: ${response.status} ${details.slice(0, 200)}`
+      `Resposta inválida do servidor (esperado JSON) em ${SITE_MANIFEST_URL}: ${response.status} ${details.slice(0, 200)}`
     );
   }
 
@@ -245,29 +240,24 @@ export async function fetchSiteData(): Promise<SiteData> {
 }
 
 export async function listManagerPath(path = ""): Promise<ManagerListing> {
-  const url = new URL(STORAGE_LIST_URL);
-  url.searchParams.set("mode", "manager");
-  url.searchParams.set("path", path);
-
-  const response = await fetch(url.toString(), {
-    method: "GET",
-    headers: { "Content-Type": "application/json" },
-    mode: "cors",
+  const payload = await postStorageOperation<unknown>({
+    operation: "listManager",
+    currentPath: path,
   });
 
-  if (!response.ok) {
-    throw new Error(`Falha ao listar diretório: ${response.status}`);
+  return parseManagerPayload(payload);
+}
+
+export async function buildManifest(): Promise<string> {
+  const payload = await postStorageOperation<{ url?: string }>({
+    operation: "buildManifest",
+  });
+
+  if (!payload.url) {
+    throw new Error("Resposta inválida ao gerar manifest");
   }
 
-  const contentType = response.headers.get("content-type") || "";
-  if (!contentType.includes("application/json")) {
-    const details = await response.text();
-    throw new Error(
-      `Resposta inválida do servidor (esperado JSON) em ${url.toString()}: ${response.status} ${details.slice(0, 200)}`
-    );
-  }
-
-  return parseManagerPayload(await response.json());
+  return payload.url;
 }
 
 function readFileAsBase64(file: File): Promise<string> {

@@ -8,16 +8,58 @@ import ContactSection from "@/components/ContactSection";
 import LoadingScreen from "@/components/LoadingScreen";
 import { fetchSiteData, notifyAccess, type SiteData } from "@/lib/api";
 
+function preloadImages(urls: string[]): Promise<void> {
+  const unique = Array.from(new Set(urls.map((u) => u.trim()).filter(Boolean)));
+  if (unique.length === 0) {
+    return Promise.resolve();
+  }
+
+  return Promise.all(
+    unique.map(
+      (src) =>
+        new Promise<void>((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve();
+          img.onerror = () => resolve();
+          img.src = src;
+        }),
+    ),
+  ).then(() => undefined);
+}
+
 const Index = () => {
   const [loading, setLoading] = useState(true);
   const [siteData, setSiteData] = useState<SiteData | null>(null);
   const didRunEntryEffects = useRef(false);
 
   useEffect(() => {
-    fetchSiteData()
-      .then((data) => setSiteData(data))
-      .catch((err) => console.error("Error fetching site data:", err))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const data = await fetchSiteData();
+        const urlsToPreload = [
+          ...data.homePhotos.map((p) => p.src),
+          ...data.albums.map((album) => album.cover),
+          ...(data.aboutPhotoUrl ? [data.aboutPhotoUrl] : []),
+        ];
+
+        await preloadImages(urlsToPreload);
+        if (!cancelled) {
+          setSiteData(data);
+        }
+      } catch (err) {
+        console.error("Error fetching site data:", err);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

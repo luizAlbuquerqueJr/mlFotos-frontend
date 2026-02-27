@@ -9,7 +9,6 @@ interface AlbumsSectionProps {
 
 const AlbumsSection = ({ albums }: AlbumsSectionProps) => {
   const [openAlbum, setOpenAlbum] = useState<FetchedAlbum | null>(null);
-  const [loadedCovers, setLoadedCovers] = useState<Record<string, boolean>>({});
 
   return (
     <>
@@ -36,20 +35,11 @@ const AlbumsSection = ({ albums }: AlbumsSectionProps) => {
               onClick={() => setOpenAlbum(album)}
               className="group cursor-pointer relative overflow-hidden rounded-sm aspect-[3/4]"
             >
-              {!loadedCovers[album.id] && (
-                <div className="absolute inset-0 z-[1] flex items-center justify-center bg-background/30">
-                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-foreground/60 border-t-transparent" />
-                </div>
-              )}
-
               <img
                 src={album.cover}
                 alt={album.title}
                 loading="lazy"
                 className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                style={{ opacity: loadedCovers[album.id] ? 1 : 0 }}
-                onLoad={() => setLoadedCovers((prev) => ({ ...prev, [album.id]: true }))}
-                onError={() => setLoadedCovers((prev) => ({ ...prev, [album.id]: true }))}
               />
               <div className="absolute inset-0 bg-background/40 group-hover:bg-background/20 transition-colors duration-500" />
               <div className="absolute inset-0 flex items-end p-6">

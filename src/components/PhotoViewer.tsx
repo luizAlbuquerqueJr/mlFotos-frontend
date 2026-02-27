@@ -19,6 +19,8 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
   const [showHint, setShowHint] = useState(true);
   const isMobile = useIsMobile();
 
+  const loadedSrcsRef = useRef<Set<string>>(new Set());
+
   // Pointer (desktop) refs
   const isDragging = useRef(false);
   const isTouchInteracting = useRef(false);
@@ -47,6 +49,18 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
   useEffect(() => {
     document.body.style.overflow = "hidden";
     const timer = setTimeout(() => setShowHint(false), 2500);
+
+    // Preload album photos once on open to maximize cache hits when navigating.
+    // We resolve on error too to avoid blocking.
+    for (const photo of album.photos) {
+      const src = photo.src?.trim();
+      if (!src || loadedSrcsRef.current.has(src)) continue;
+      const img = new Image();
+      img.onload = () => loadedSrcsRef.current.add(src);
+      img.onerror = () => loadedSrcsRef.current.add(src);
+      img.src = src;
+    }
+
     return () => {
       document.body.style.overflow = "";
       clearTimeout(timer);
@@ -94,6 +108,12 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
   }, [clampPan, updateBaseImageSize]);
 
   useEffect(() => {
+    const src = album.photos[photoIndex]?.src?.trim();
+    if (src && loadedSrcsRef.current.has(src)) {
+      setIsImageLoading(false);
+      return;
+    }
+
     setIsImageLoading(true);
   }, [photoIndex, album.id]);
 
@@ -301,7 +321,6 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
 
         <motion.img
           ref={imageRef}
-          key={`${album.id}-${photoIndex}`}
           src={album.photos[photoIndex].src}
           alt={album.photos[photoIndex].alt}
           initial={{ opacity: 0 }}
@@ -317,11 +336,21 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
           className="max-w-[90vw] max-h-[85vh] object-contain select-none"
           draggable={false}
           onLoad={() => {
+            const src = album.photos[photoIndex]?.src?.trim();
+            if (src) {
+              loadedSrcsRef.current.add(src);
+            }
             setIsImageLoading(false);
             updateBaseImageSize();
             setPan((prev) => clampPan(prev, zoomRef.current));
           }}
-          onError={() => setIsImageLoading(false)}
+          onError={() => {
+            const src = album.photos[photoIndex]?.src?.trim();
+            if (src) {
+              loadedSrcsRef.current.add(src);
+            }
+            setIsImageLoading(false);
+          }}
           onClick={(e) => {
             e.stopPropagation();
             if (!isMobile && !isDragging.current) toggleZoom();
