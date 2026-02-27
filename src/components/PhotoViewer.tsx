@@ -9,15 +9,19 @@ interface PhotoViewerProps {
   onClose: () => void;
 }
 
+const MAX_ZOOM = 3;
+
 const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
   const [photoIndex, setPhotoIndex] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isImageLoading, setIsImageLoading] = useState(true);
   const [showHint, setShowHint] = useState(true);
   const isMobile = useIsMobile();
 
   // Pointer (desktop) refs
   const isDragging = useRef(false);
+  const isTouchInteracting = useRef(false);
   const dragStart = useRef({ x: 0, y: 0 });
   const panStart = useRef({ x: 0, y: 0 });
 
@@ -32,6 +36,9 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
   const hasMoved = useRef(false);
   const zoomRef = useRef(zoom);
   const panRef = useRef(pan);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const baseImageSizeRef = useRef({ width: 0, height: 0 });
 
   // Keep refs in sync
   zoomRef.current = zoom;
@@ -45,6 +52,50 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
       clearTimeout(timer);
     };
   }, []);
+
+  const clampPan = useCallback((nextPan: { x: number; y: number }, nextZoom: number) => {
+    if (nextZoom <= 1) return { x: 0, y: 0 };
+
+    const container = containerRef.current;
+    const baseSize = baseImageSizeRef.current;
+    if (!container || !baseSize.width || !baseSize.height) return nextPan;
+
+    const containerRect = container.getBoundingClientRect();
+    const maxX = Math.max(0, (baseSize.width * nextZoom - containerRect.width) / 2);
+    const maxY = Math.max(0, (baseSize.height * nextZoom - containerRect.height) / 2);
+
+    return {
+      x: Math.min(maxX, Math.max(-maxX, nextPan.x)),
+      y: Math.min(maxY, Math.max(-maxY, nextPan.y)),
+    };
+  }, []);
+
+  const updateBaseImageSize = useCallback(() => {
+    const image = imageRef.current;
+    if (!image) return;
+
+    const rect = image.getBoundingClientRect();
+    const currentZoom = Math.max(zoomRef.current, 1);
+
+    baseImageSizeRef.current = {
+      width: rect.width / currentZoom,
+      height: rect.height / currentZoom,
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleResize = () => {
+      updateBaseImageSize();
+      setPan((prev) => clampPan(prev, zoomRef.current));
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [clampPan, updateBaseImageSize]);
+
+  useEffect(() => {
+    setIsImageLoading(true);
+  }, [photoIndex, album.id]);
 
   const resetZoom = useCallback(() => {
     setZoom(1);
@@ -65,7 +116,7 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
     if (zoomRef.current > 1) {
       resetZoom();
     } else {
-      setZoom(2.5);
+      setZoom(2);
       setPan({ x: 0, y: 0 });
     }
   }, [resetZoom]);
@@ -73,10 +124,14 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
   // --- Desktop handlers ---
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.stopPropagation();
-    const newZoom = Math.min(5, Math.max(1, zoomRef.current - e.deltaY * 0.002));
-    if (newZoom === 1) setPan({ x: 0, y: 0 });
+    const newZoom = Math.min(MAX_ZOOM, Math.max(1, zoomRef.current - e.deltaY * 0.002));
+    if (newZoom === 1) {
+      setPan({ x: 0, y: 0 });
+    } else {
+      setPan((prev) => clampPan(prev, newZoom));
+    }
     setZoom(newZoom);
-  }, []);
+  }, [clampPan]);
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === "touch") return; // handled by touch events
@@ -94,8 +149,8 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
     e.stopPropagation();
     const dx = e.clientX - dragStart.current.x;
     const dy = e.clientY - dragStart.current.y;
-    setPan({ x: panStart.current.x + dx, y: panStart.current.y + dy });
-  }, []);
+    setPan(clampPan({ x: panStart.current.x + dx, y: panStart.current.y + dy }, zoomRef.current));
+  }, [clampPan]);
 
   const handlePointerUp = useCallback(() => {
     isDragging.current = false;
@@ -111,6 +166,7 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     e.stopPropagation();
     hasMoved.current = false;
+    isTouchInteracting.current = true;
 
     if (e.touches.length === 2) {
       isPinching.current = true;
@@ -128,20 +184,25 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
     e.stopPropagation();
     e.preventDefault();
     hasMoved.current = true;
+    isTouchInteracting.current = true;
 
     if (e.touches.length === 2 && isPinching.current) {
       const newDist = getTouchDistance(e.touches);
       const scale = newDist / lastTouchDistance.current;
-      const newZoom = Math.min(5, Math.max(1, zoomRef.current * scale));
+      const newZoom = Math.min(MAX_ZOOM, Math.max(1, zoomRef.current * scale));
       lastTouchDistance.current = newDist;
-      if (newZoom === 1) setPan({ x: 0, y: 0 });
+      if (newZoom === 1) {
+        setPan({ x: 0, y: 0 });
+      } else {
+        setPan((prev) => clampPan(prev, newZoom));
+      }
       setZoom(newZoom);
     } else if (e.touches.length === 1 && !isPinching.current && zoomRef.current > 1) {
       const dx = e.touches[0].clientX - touchPanStart.current.x;
       const dy = e.touches[0].clientY - touchPanStart.current.y;
-      setPan({ x: touchStartPan.current.x + dx, y: touchStartPan.current.y + dy });
+      setPan(clampPan({ x: touchStartPan.current.x + dx, y: touchStartPan.current.y + dy }, zoomRef.current));
     }
-  }, []);
+  }, [clampPan]);
 
   const handleTouchEnd = useCallback((e: React.TouchEvent) => {
     e.stopPropagation();
@@ -152,6 +213,7 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
     }
 
     if (e.touches.length > 0) return;
+    isTouchInteracting.current = false;
 
     const now = Date.now();
     const timeSinceLastTap = now - lastTapTime.current;
@@ -184,7 +246,7 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.3 }}
-      className="fixed inset-0 z-50 bg-background/98 flex items-center justify-center"
+      className="fixed inset-0 z-50 bg-black flex items-center justify-center"
       onClick={onClose}
     >
       {/* Close button - larger touch target on mobile */}
@@ -222,7 +284,8 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
 
       {/* Image container */}
       <div
-        className="relative overflow-hidden max-w-[90vw] max-h-[85vh] flex items-center justify-center"
+        ref={containerRef}
+        className="relative overflow-hidden max-w-[90vw] max-h-[85vh] flex items-center justify-center border-y border-foreground/20 py-2"
         style={{ touchAction: "none" }}
         onWheel={handleWheel}
         onClick={(e) => e.stopPropagation()}
@@ -230,20 +293,35 @@ const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
+        {isImageLoading && (
+          <div className="absolute inset-0 z-[2] flex items-center justify-center bg-black/35">
+            <div className="h-10 w-10 animate-spin rounded-full border-2 border-foreground/70 border-t-transparent" />
+          </div>
+        )}
+
         <motion.img
+          ref={imageRef}
           key={`${album.id}-${photoIndex}`}
           src={album.photos[photoIndex].src}
           alt={album.photos[photoIndex].alt}
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
           transition={{ duration: 0.3 }}
           style={{
             transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
             cursor: zoom > 1 ? "grab" : "zoom-in",
-            transition: isDragging.current ? "none" : "transform 0.2s ease",
+            transition: isDragging.current || isTouchInteracting.current ? "none" : "transform 0.2s ease",
+            touchAction: "none",
+            opacity: isImageLoading ? 0 : 1,
           }}
           className="max-w-[90vw] max-h-[85vh] object-contain select-none"
           draggable={false}
+          onLoad={() => {
+            setIsImageLoading(false);
+            updateBaseImageSize();
+            setPan((prev) => clampPan(prev, zoomRef.current));
+          }}
+          onError={() => setIsImageLoading(false)}
           onClick={(e) => {
             e.stopPropagation();
             if (!isMobile && !isDragging.current) toggleZoom();

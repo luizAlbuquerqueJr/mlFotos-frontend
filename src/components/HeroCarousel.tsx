@@ -9,12 +9,25 @@ const HeroCarousel = ({ slides }: HeroCarouselProps) => {
   const [current, setCurrent] = useState(0);
   const [loaded, setLoaded] = useState(false);
 
-  const next = useCallback(() => setCurrent((p) => (p + 1) % slides.length), [slides.length]);
+  const next = useCallback(() => {
+    if (slides.length === 0) return;
+    setCurrent((p) => (p + 1) % slides.length);
+  }, [slides.length]);
 
   useEffect(() => {
+    if (slides.length === 0) return;
     const timer = setInterval(next, 5000);
     return () => clearInterval(timer);
-  }, [next]);
+  }, [next, slides.length]);
+
+  useEffect(() => {
+    if (slides.length === 0) return;
+    setLoaded(false);
+  }, [current, slides.length]);
+
+  if (slides.length === 0) {
+    return <section id="home" className="relative h-screen w-full bg-muted" />;
+  }
 
   return (
     <section id="home" className="relative h-screen w-full overflow-hidden">
@@ -32,6 +45,12 @@ const HeroCarousel = ({ slides }: HeroCarouselProps) => {
           onError={() => setLoaded(true)}
         />
       </AnimatePresence>
+
+      {!loaded && (
+        <div className="absolute inset-0 z-[1] flex items-center justify-center bg-background/25">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-foreground/60 border-t-transparent" />
+        </div>
+      )}
 
       <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-transparent to-background/80" />
 

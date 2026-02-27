@@ -1,11 +1,102 @@
-const API_URL = "https://ygjosyxbfdqfkcqmhqva.supabase.co/functions/v1/fotografia-molu";
+const SUPABASE_PROJECT_URL = "https://ygjosyxbfdqfkcqmhqva.supabase.co";
 const API_KEY = "sb_publishable_ccwkOvXWvMOXdYtje92uJg_2G4Dc9_p";
-const NOTIFY_URL = "https://ygjosyxbfdqfkcqmhqva.supabase.co/functions/v1/notify-access";
+function readEnvUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : undefined;
+}
+
+const STORAGE_LIST_URL =
+  readEnvUrl(import.meta.env.VITE_STORAGE_LIST_URL) ??
+  (import.meta.env.PROD
+    ? "https://us-central1-fotografia-488219.cloudfunctions.net/storage-list"
+    : "http://localhost:8082");
+const STORAGE_UPLOAD_URL =
+  readEnvUrl(import.meta.env.VITE_STORAGE_UPLOAD_URL) ??
+  (import.meta.env.PROD
+    ? "https://us-central1-fotografia-488219.cloudfunctions.net/storage-upload"
+    : "http://localhost:8081");
+const NOTIFY_URL = `${SUPABASE_PROJECT_URL}/functions/v1/notify-access`;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? API_KEY;
 
 interface ClientGeo {
   ip: string;
   location: string | null;
+}
+
+function parseManagerPayload(payload: unknown): ManagerListing {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Resposta inválida do gerenciador");
+  }
+
+  const data = payload as StorageManagerPayload;
+
+  return {
+    currentPath: typeof data.currentPath === "string" ? data.currentPath : "",
+    folders: (data.folders ?? []).map((folder) => ({
+      name: folder.name,
+      path: folder.path,
+    })),
+    files: (data.files ?? []).map((file) => ({
+      name: file.name,
+      path: file.path,
+      url: file.url,
+    })),
+  };
+}
+
+async function postStorageOperation<T>(body: Record<string, unknown>): Promise<T> {
+  const response = await fetch(STORAGE_UPLOAD_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    mode: "cors",
+  });
+
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`Falha na operação: ${response.status} ${details}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    const details = await response.text();
+    throw new Error(
+      `Resposta inválida do servidor (esperado JSON) em ${STORAGE_UPLOAD_URL}: ${response.status} ${details.slice(0, 200)}`
+    );
+  }
+
+  return (await response.json()) as T;
+}
+
+export interface UploadImageInput {
+  category: "home" | "album";
+  file: File;
+  albumName?: string;
+}
+
+export interface UploadedImage {
+  path: string;
+  url: string;
+}
+
+export interface ManagerFolderItem {
+  name: string;
+  path: string;
+}
+
+export interface ManagerFileItem {
+  name: string;
+  path: string;
+  url: string;
+}
+
+export interface ManagerListing {
+  currentPath: string;
+  folders: ManagerFolderItem[];
+  files: ManagerFileItem[];
 }
 
 export interface FetchedPhoto {
@@ -28,14 +119,23 @@ export interface SiteData {
   aboutPhotoUrl: string | null;
 }
 
-function extractIdFromUrl(url: string): string {
-  const match = url.match(/id=([^&]+)/);
-  return match ? match[1] : "";
+interface StorageListPhoto {
+  src: string;
+  alt: string;
+  path?: string;
 }
 
-function toEmbedUrl(driveUrl: string): string {
-  const id = extractIdFromUrl(driveUrl);
-  return id ? `https://lh3.googleusercontent.com/d/${id}=s1920` : driveUrl;
+interface StorageListAlbum {
+  id: string;
+  title: string;
+  cover: string;
+  photos: StorageListPhoto[];
+}
+
+interface StorageManagerPayload {
+  currentPath?: string;
+  folders?: ManagerFolderItem[];
+  files?: ManagerFileItem[];
 }
 
 function formatLocation(city: string, region: string, country: string): string | null {
@@ -94,15 +194,37 @@ async function getClientGeo(): Promise<ClientGeo> {
   return { ip: "unknown", location: null };
 }
 
-export async function fetchSiteData(folderUrl: string): Promise<SiteData> {
-  const response = await fetch(API_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
-      "Content-Type": "application/json",
-      "apikey": SUPABASE_ANON_KEY,
-    },
-    body: JSON.stringify({ url: folderUrl }),
+function parseStorageListPayload(payload: unknown): SiteData {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Resposta inválida da função de listagem");
+  }
+
+  const raw = payload as {
+    homePhotos?: StorageListPhoto[];
+    albums?: StorageListAlbum[];
+    logoUrl?: string | null;
+    sobreUrl?: string | null;
+    aboutPhotoUrl?: string | null;
+  };
+
+  return {
+    homePhotos: (raw.homePhotos ?? []).map((photo) => ({ src: photo.src, alt: photo.alt })),
+    albums: (raw.albums ?? []).map((album) => ({
+      id: album.id,
+      title: album.title,
+      cover: album.cover,
+      photos: (album.photos ?? []).map((photo) => ({ src: photo.src, alt: photo.alt })),
+    })),
+    logoUrl: raw.logoUrl ?? null,
+    sobreUrl: raw.sobreUrl ?? null,
+    aboutPhotoUrl: raw.aboutPhotoUrl ?? null,
+  };
+}
+
+export async function fetchSiteData(): Promise<SiteData> {
+  const response = await fetch(STORAGE_LIST_URL, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
     mode: "cors",
   });
 
@@ -110,65 +232,161 @@ export async function fetchSiteData(folderUrl: string): Promise<SiteData> {
     throw new Error(`Failed to fetch photos: ${response.status}`);
   }
 
-  const data = await response.json();
-
-  // Parse the nested response structure
-  const siteArray = data["site fotografia molu"] as Record<string, unknown>[];
-
-  const result: SiteData = {
-    homePhotos: [],
-    albums: [],
-    logoUrl: null,
-    sobreUrl: null,
-    aboutPhotoUrl: null,
-  };
-
-  for (const item of siteArray) {
-    // Home photos
-    if ("Home" in item) {
-      const homeItems = item["Home"] as Record<string, string>[];
-      result.homePhotos = homeItems.map((entry) => {
-        const [filename, url] = Object.entries(entry)[0];
-        return { src: toEmbedUrl(url), alt: filename };
-      });
-    }
-
-    // Logo
-    if ("logo.jpg" in item) {
-      result.logoUrl = toEmbedUrl(item["logo.jpg"] as string);
-    }
-
-    // Sobre
-    if ("sobre.txt" in item) {
-      result.sobreUrl = item["sobre.txt"] as string;
-    }
-
-    // About photo (about.jpg, about.png, etc.)
-    const aboutKey = Object.keys(item).find(k => k.toLowerCase().startsWith("about."));
-    if (aboutKey) {
-      result.aboutPhotoUrl = toEmbedUrl(item[aboutKey] as string);
-    }
-
-    // Albums
-    if ("Álbuns" in item) {
-      const albumsArray = item["Álbuns"] as Record<string, Record<string, string>[]>[];
-      for (const albumEntry of albumsArray) {
-        const [title, photosArray] = Object.entries(albumEntry)[0];
-        const photos: FetchedPhoto[] = photosArray.map((photoEntry) => {
-          const [filename, url] = Object.entries(photoEntry)[0];
-          return { src: toEmbedUrl(url), alt: filename };
-        });
-        result.albums.push({
-          id: title.toLowerCase().replace(/\s+/g, "-"),
-          title,
-          cover: photos[0]?.src || "",
-          photos,
-        });
-      }
-    }
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    const details = await response.text();
+    throw new Error(
+      `Resposta inválida do servidor (esperado JSON) em ${STORAGE_LIST_URL}: ${response.status} ${details.slice(0, 200)}`
+    );
   }
 
-  return result;
+  const data = await response.json();
+  return parseStorageListPayload(data);
+}
+
+export async function listManagerPath(path = ""): Promise<ManagerListing> {
+  const url = new URL(STORAGE_LIST_URL);
+  url.searchParams.set("mode", "manager");
+  url.searchParams.set("path", path);
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+    mode: "cors",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Falha ao listar diretório: ${response.status}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    const details = await response.text();
+    throw new Error(
+      `Resposta inválida do servidor (esperado JSON) em ${url.toString()}: ${response.status} ${details.slice(0, 200)}`
+    );
+  }
+
+  return parseManagerPayload(await response.json());
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("Falha ao converter arquivo para base64"));
+    };
+    reader.onerror = () => reject(new Error("Falha ao ler arquivo"));
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function uploadImage(input: UploadImageInput): Promise<UploadedImage> {
+  if (input.category === "album" && !input.albumName?.trim()) {
+    throw new Error("Informe o nome do álbum");
+  }
+
+  const fileDataBase64 = await readFileAsBase64(input.file);
+
+  const payload = await postStorageOperation<Partial<UploadedImage>>({
+    operation: "upload",
+    category: input.category,
+    albumName: input.albumName,
+    fileName: input.file.name,
+    contentType: input.file.type,
+    fileDataBase64,
+  });
+
+  if (!payload.path || !payload.url) {
+    throw new Error("Resposta de upload inválida");
+  }
+
+  return {
+    path: payload.path,
+    url: payload.url,
+  };
+}
+
+export async function uploadImageToPath(folderPath: string, file: File): Promise<UploadedImage> {
+  const fileDataBase64 = await readFileAsBase64(file);
+
+  const payload = await postStorageOperation<Partial<UploadedImage>>({
+    operation: "upload",
+    folderPath,
+    fileName: file.name,
+    contentType: file.type,
+    fileDataBase64,
+  });
+
+  if (!payload.path || !payload.url) {
+    throw new Error("Resposta de upload inválida");
+  }
+
+  return {
+    path: payload.path,
+    url: payload.url,
+  };
+}
+
+export async function createFolder(parentPath: string, name: string): Promise<string> {
+  const payload = await postStorageOperation<{ path?: string }>({
+    operation: "createFolder",
+    parentPath,
+    newName: name,
+  });
+
+  if (!payload.path) {
+    throw new Error("Resposta inválida ao criar pasta");
+  }
+
+  return payload.path;
+}
+
+export async function renameFolder(folderPath: string, name: string): Promise<string> {
+  const payload = await postStorageOperation<{ path?: string }>({
+    operation: "renameFolder",
+    folderPath,
+    newName: name,
+  });
+
+  if (!payload.path) {
+    throw new Error("Resposta inválida ao renomear pasta");
+  }
+
+  return payload.path;
+}
+
+export async function deleteFolder(folderPath: string): Promise<void> {
+  await postStorageOperation<{ ok?: boolean }>({
+    operation: "deleteFolder",
+    folderPath,
+  });
+}
+
+export async function renameFile(filePath: string, name: string): Promise<string> {
+  const payload = await postStorageOperation<{ path?: string }>({
+    operation: "renameFile",
+    filePath,
+    newName: name,
+  });
+
+  if (!payload.path) {
+    throw new Error("Resposta inválida ao renomear arquivo");
+  }
+
+  return payload.path;
+}
+
+export async function deleteFile(filePath: string): Promise<void> {
+  await postStorageOperation<{ ok?: boolean }>({
+    operation: "deleteFile",
+    filePath,
+  });
 }
 
 export async function notifyAccess(path: string): Promise<void> {

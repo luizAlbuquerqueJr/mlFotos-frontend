@@ -8,15 +8,13 @@ import ContactSection from "@/components/ContactSection";
 import LoadingScreen from "@/components/LoadingScreen";
 import { fetchSiteData, notifyAccess, type SiteData } from "@/lib/api";
 
-const FOLDER_URL = "https://drive.google.com/drive/folders/1uDfgMQAKuW2oeSgPBj19ZhpcqnIhoIs1?usp=sharing";
-
 const Index = () => {
   const [loading, setLoading] = useState(true);
   const [siteData, setSiteData] = useState<SiteData | null>(null);
   const didRunEntryEffects = useRef(false);
 
   useEffect(() => {
-    fetchSiteData(FOLDER_URL)
+    fetchSiteData()
       .then((data) => setSiteData(data))
       .catch((err) => console.error("Error fetching site data:", err))
       .finally(() => setLoading(false));
