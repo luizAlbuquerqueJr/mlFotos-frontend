@@ -3,6 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function () {
+        try {
+          var isMobile = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+          if (!isMobile) return;
+
+          var viewport = document.querySelector('meta[name="viewport"]');
+          if (!viewport) return;
+
+          var content = viewport.getAttribute("content") || "";
+          if (content.indexOf("user-scalable") !== -1 || content.indexOf("maximum-scale") !== -1) return;
+
+          viewport.setAttribute(
+            "content",
+            content + ", maximum-scale=1.0, user-scalable=no"
+          );
+        } catch (_) {
+          // ignore
+        }
+      })();
+    </script>
     <!-- TODO: Set the document title to the name of your application -->
     <title>Monica Lima — Fotografia</title>
     <meta name="description" content="Portfólio da fotógrafa Monica Lima. Uma experiência visual interativa e memorável.">
