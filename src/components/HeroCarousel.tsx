@@ -1,7 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import PhotoViewer from "@/components/PhotoViewer";
-import type { FetchedAlbum } from "@/lib/api";
+import { useState, useEffect, useCallback } from "react";
+import { motion } from "framer-motion";
 
 interface HeroCarouselProps {
   slides: string[];
@@ -9,21 +7,6 @@ interface HeroCarouselProps {
 
 const HeroCarousel = ({ slides }: HeroCarouselProps) => {
   const [current, setCurrent] = useState(0);
-  const [openViewer, setOpenViewer] = useState(false);
-
-  const viewerAlbum = useMemo((): FetchedAlbum => {
-    const photos = slides.map((src, index) => ({
-      src,
-      alt: `Home ${index + 1}`,
-    }));
-
-    return {
-      id: "home",
-      title: "Home",
-      cover: slides[0] ?? "",
-      photos,
-    };
-  }, [slides]);
 
   const next = useCallback(() => {
     if (slides.length === 0) return;
@@ -70,10 +53,6 @@ const HeroCarousel = ({ slides }: HeroCarouselProps) => {
           loading={index === 0 ? "eager" : "eager"}
           decoding="async"
           draggable={false}
-          onClick={() => {
-            if (index !== current) return;
-            setOpenViewer(true);
-          }}
         />
       ))}
 
@@ -98,18 +77,6 @@ const HeroCarousel = ({ slides }: HeroCarouselProps) => {
       >
         <div className="w-[1px] h-10 bg-foreground/30" />
       </motion.div>
-
-      <AnimatePresence>
-        {openViewer && (
-          <PhotoViewer
-            album={{
-              ...viewerAlbum,
-              photos: viewerAlbum.photos.slice(current).concat(viewerAlbum.photos.slice(0, current)),
-            }}
-            onClose={() => setOpenViewer(false)}
-          />
-        )}
-      </AnimatePresence>
     </section>
   );
 };
