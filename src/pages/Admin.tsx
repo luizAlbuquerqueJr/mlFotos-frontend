@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight, FileUp, FolderPlus, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import ImageCropDialog from "@/components/ImageCropDialog";
 import { useToast } from "@/hooks/use-toast";
+import { cropImageFile, type CropAreaPixels } from "@/lib/imageCrop";
 import {
   buildManifest,
   createFolder,
@@ -24,6 +26,16 @@ const Admin = () => {
   const [folders, setFolders] = useState<ManagerFolderItem[]>([]);
   const [files, setFiles] = useState<ManagerFileItem[]>([]);
   const [busy, setBusy] = useState(false);
+
+   const [cropOpen, setCropOpen] = useState(false);
+   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
+   const [cropTitle, setCropTitle] = useState<string>("");
+   const [cropAspect, setCropAspect] = useState<number>(9 / 16);
+
+   const cropFileRef = useRef<File | null>(null);
+   const cropObjectUrlRef = useRef<string | null>(null);
+   const cropResolveRef = useRef<((file: File) => void) | null>(null);
+   const cropRejectRef = useRef<((reason?: unknown) => void) | null>(null);
 
   useEffect(() => {
     listManagerPath(currentPath)
@@ -74,6 +86,26 @@ const Admin = () => {
     }
   };
 
+   const requestCrop = async (file: File, opts: { aspect: number; title: string }): Promise<File> => {
+     const src = URL.createObjectURL(file);
+
+     if (cropObjectUrlRef.current) {
+       URL.revokeObjectURL(cropObjectUrlRef.current);
+     }
+     cropObjectUrlRef.current = src;
+     cropFileRef.current = file;
+
+     setCropImageSrc(src);
+     setCropAspect(opts.aspect);
+     setCropTitle(opts.title);
+     setCropOpen(true);
+
+     return await new Promise<File>((resolve, reject) => {
+       cropResolveRef.current = resolve;
+       cropRejectRef.current = reject;
+     });
+   };
+
   const handleUploadFiles = async (pickedFiles: File[]) => {
     if (!canUploadToPath) {
       toast({
@@ -88,10 +120,15 @@ const Admin = () => {
       return;
     }
 
+    const isHome = currentPath === "home";
+    const aspect = isHome ? 9 / 16 : 4 / 5;
+    const title = isHome ? "Cortar imagem (Home 9:16)" : "Cortar imagem (Álbum 4:5)";
+
     setBusy(true);
     try {
       for (const file of pickedFiles) {
-        await uploadImageToPath(currentPath, file);
+        const cropped = await requestCrop(file, { aspect, title });
+        await uploadImageToPath(currentPath, cropped);
       }
       await refresh();
       toast({ title: "Upload concluído" });
@@ -389,6 +426,62 @@ const Admin = () => {
           <FolderPlus className="h-5 w-5" />
         </button>
       )}
+
+      <ImageCropDialog
+        open={cropOpen}
+        imageSrc={cropImageSrc}
+        aspect={cropAspect}
+        title={cropTitle}
+        onCancel={() => {
+          setCropOpen(false);
+          const reject = cropRejectRef.current;
+          cropResolveRef.current = null;
+          cropRejectRef.current = null;
+          cropFileRef.current = null;
+
+          if (cropObjectUrlRef.current) {
+            URL.revokeObjectURL(cropObjectUrlRef.current);
+            cropObjectUrlRef.current = null;
+          }
+
+          reject?.(new Error("Crop cancelled"));
+        }}
+        onConfirm={async (area: CropAreaPixels) => {
+          const file = cropFileRef.current;
+          if (!file) return;
+
+          try {
+            const cropped = await cropImageFile(file, area);
+            setCropOpen(false);
+
+            const resolve = cropResolveRef.current;
+            cropResolveRef.current = null;
+            cropRejectRef.current = null;
+            cropFileRef.current = null;
+
+            if (cropObjectUrlRef.current) {
+              URL.revokeObjectURL(cropObjectUrlRef.current);
+              cropObjectUrlRef.current = null;
+            }
+
+            resolve?.(cropped);
+          } catch (error) {
+            setCropOpen(false);
+
+            const reject = cropRejectRef.current;
+            cropResolveRef.current = null;
+            cropRejectRef.current = null;
+            cropFileRef.current = null;
+
+            if (cropObjectUrlRef.current) {
+              URL.revokeObjectURL(cropObjectUrlRef.current);
+              cropObjectUrlRef.current = null;
+            }
+
+            reject?.(error);
+          }
+        }}
+      />
     </main>
   );
 };
