@@ -1,5 +1,3 @@
-const SUPABASE_PROJECT_URL = "https://ygjosyxbfdqfkcqmhqva.supabase.co";
-const API_KEY = "sb_publishable_ccwkOvXWvMOXdYtje92uJg_2G4Dc9_p";
 function readEnvUrl(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -15,8 +13,12 @@ const STORAGE_UPLOAD_URL =
 const SITE_MANIFEST_URL =
   readEnvUrl(import.meta.env.VITE_SITE_MANIFEST_URL) ??
   "https://storage.googleapis.com/fotos-monica-lima/site-manifest.json";
-const NOTIFY_URL = `${SUPABASE_PROJECT_URL}/functions/v1/notify-access`;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? API_KEY;
+
+const NOTIFY_URL =
+  readEnvUrl(import.meta.env.VITE_NOTIFY_ACCESS_URL) ??
+  (import.meta.env.PROD
+    ? "https://us-central1-fotografia-488219.cloudfunctions.net/notify-access"
+    : "http://localhost:8082");
 
 interface ClientGeo {
   ip: string;
@@ -388,9 +390,7 @@ export async function notifyAccess(path: string): Promise<void> {
   const response = await fetch(NOTIFY_URL, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
       "Content-Type": "application/json",
-      "apikey": SUPABASE_ANON_KEY,
     },
     body: JSON.stringify({ text }),
     mode: "cors",
