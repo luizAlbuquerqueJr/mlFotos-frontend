@@ -7,12 +7,18 @@ import type { FetchedAlbum } from "@/lib/api";
 interface PhotoViewerProps {
   album: FetchedAlbum;
   onClose: () => void;
+  initialPhotoIndex?: number;
 }
 
 const MAX_ZOOM = 3;
 
-const PhotoViewer = ({ album, onClose }: PhotoViewerProps) => {
-  const [photoIndex, setPhotoIndex] = useState(0);
+const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps) => {
+  const safeInitialIndex =
+    Number.isInteger(initialPhotoIndex) && initialPhotoIndex >= 0 && initialPhotoIndex < album.photos.length
+      ? initialPhotoIndex
+      : 0;
+
+  const [photoIndex, setPhotoIndex] = useState(safeInitialIndex);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isImageLoading, setIsImageLoading] = useState(true);

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, useMotionValueEvent, useScroll } from "framer-motion";
-import { Menu, X } from "lucide-react";
+import { Camera, Menu, X } from "lucide-react";
 const navItems = [
   { label: "Inicio", href: "#home" },
   { label: "Álbuns", href: "#albuns" },
@@ -57,14 +57,24 @@ const Header = () => {
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="absolute top-full left-0 right-0 bg-background/95 backdrop-blur-lg border-b border-border/30 py-6 flex flex-col items-center gap-6 md:hidden"
+          className="absolute top-full left-0 right-0 overflow-hidden bg-background/95 backdrop-blur-lg border-b border-border/30 py-6 flex flex-col items-center gap-6 md:hidden"
         >
+          <div className="pointer-events-none absolute inset-0 opacity-[0.08]">
+            <div className="grid h-full w-full grid-cols-6 gap-6 p-5">
+              {Array.from({ length: 36 }).map((_, index) => (
+                <div key={`camera-pattern-${index}`} className="flex items-center justify-center">
+                  <Camera className="h-4 w-4 text-foreground/70" strokeWidth={1.5} />
+                </div>
+              ))}
+            </div>
+          </div>
+
           {navItems.map((item) => (
             <a
               key={item.href}
               href={item.href}
               onClick={() => setMenuOpen(false)}
-              className="text-sm tracking-[0.2em] uppercase text-muted-foreground hover:text-foreground transition-colors"
+              className="relative z-10 text-sm tracking-[0.2em] uppercase text-muted-foreground hover:text-foreground transition-colors"
             >
               {item.label}
             </a>
