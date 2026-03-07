@@ -42,18 +42,32 @@ const HeroCarousel = ({ slides }: HeroCarouselProps) => {
   return (
     <section id="home" className="relative h-screen w-full overflow-hidden">
       {slides.map((src, index) => (
-        <motion.img
+        <motion.div
           key={src}
-          src={src}
-          alt={`Slide ${index + 1}`}
           animate={{ opacity: index === current ? 1 : 0 }}
           transition={{ duration: 1.5, ease: "easeInOut" }}
-          className="absolute inset-0 w-full h-full object-cover"
+          className="absolute inset-0"
           style={{ willChange: "opacity" }}
-          loading={index === 0 ? "eager" : "eager"}
-          decoding="async"
-          draggable={false}
-        />
+        >
+          <img
+            src={src}
+            alt=""
+            aria-hidden
+            className="absolute inset-0 h-full w-full object-cover blur-2xl scale-110 opacity-60"
+            loading={index === 0 ? "eager" : "eager"}
+            decoding="async"
+            draggable={false}
+          />
+
+          <img
+            src={src}
+            alt={`Slide ${index + 1}`}
+            className="absolute inset-0 h-full w-full object-contain md:object-cover"
+            loading={index === 0 ? "eager" : "eager"}
+            decoding="async"
+            draggable={false}
+          />
+        </motion.div>
       ))}
 
       <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-transparent to-background/80" />
