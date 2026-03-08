@@ -5,6 +5,14 @@ import "./index.css";
 
 const isLocalhost = window.location.hostname === "localhost";
 
+const setViewportHeightVar = () => {
+  document.documentElement.style.setProperty("--vh", `${window.innerHeight * 0.01}px`);
+};
+
+setViewportHeightVar();
+window.addEventListener("resize", setViewportHeightVar);
+window.addEventListener("orientationchange", setViewportHeightVar);
+
 const tracker = new Tracker({
   projectKey: "40KpiqKHMe1kWB1vrE34",
   respectDoNotTrack: false,

@@ -62,11 +62,21 @@ const HeroCarousel = ({ slides }: HeroCarouselProps) => {
   }, []);
 
   if (slides.length === 0) {
-    return <section id="home" className="relative h-screen w-full bg-muted" />;
+    return (
+      <section
+        id="home"
+        className="relative w-full bg-muted"
+        style={{ minHeight: "calc(var(--vh, 1vh) * 100)" }}
+      />
+    );
   }
 
   return (
-    <section id="home" className="relative h-screen w-full overflow-hidden">
+    <section
+      id="home"
+      className="relative w-full overflow-hidden"
+      style={{ minHeight: "calc(var(--vh, 1vh) * 100)" }}
+    >
       {slides.map((src, index) => (
         <motion.div
           key={src}
