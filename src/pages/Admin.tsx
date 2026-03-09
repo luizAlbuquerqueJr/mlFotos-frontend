@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronRight, FileUp, FolderPlus, Pencil, Trash2 } from "lucide-react";
+import { ChevronRight, FileUp, FolderPlus, Pencil, Trash2, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,12 +9,18 @@ import { useToast } from "@/hooks/use-toast";
 import { cropImageFile, type CropAreaPixels } from "@/lib/imageCrop";
 import {
   buildManifest,
+  createUser,
   createFolder,
   deleteFile,
+  deleteUser,
   deleteFolder,
+  listUsers,
   listManagerPath,
   renameFile,
   renameFolder,
+  updateUser,
+  type StorageBucketKey,
+  type UserRecord,
   type ManagerFileItem,
   type ManagerFolderItem,
   uploadImageToPath,
@@ -23,25 +29,48 @@ import {
 const Admin = () => {
   const { toast } = useToast();
   const [currentPath, setCurrentPath] = useState("");
+  const [bucket, setBucket] = useState<StorageBucketKey>("site");
   const [folders, setFolders] = useState<ManagerFolderItem[]>([]);
   const [files, setFiles] = useState<ManagerFileItem[]>([]);
+  const [users, setUsers] = useState<UserRecord[]>([]);
   const [busy, setBusy] = useState(false);
 
-   const [cropOpen, setCropOpen] = useState(false);
-   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
-   const [cropTitle, setCropTitle] = useState<string>("");
-   const [cropAspect, setCropAspect] = useState<number>(9 / 16);
+  const [cropOpen, setCropOpen] = useState(false);
+  const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
+  const [cropTitle, setCropTitle] = useState<string>("");
+  const [cropAspect, setCropAspect] = useState<number>(9 / 16);
 
-   const cropFileRef = useRef<File | null>(null);
-   const cropObjectUrlRef = useRef<string | null>(null);
-   const cropResolveRef = useRef<((file: File) => void) | null>(null);
-   const cropRejectRef = useRef<((reason?: unknown) => void) | null>(null);
+  const cropFileRef = useRef<File | null>(null);
+  const cropObjectUrlRef = useRef<string | null>(null);
+  const cropResolveRef = useRef<((file: File) => void) | null>(null);
+  const cropRejectRef = useRef<((reason?: unknown) => void) | null>(null);
 
   useEffect(() => {
-    listManagerPath(currentPath)
+    const isUsersRoot = bucket === "clientes" && currentPath === "clientes";
+
+    if (isUsersRoot) {
+      listUsers()
+        .then((data) => {
+          setUsers(data);
+          setFolders([]);
+          setFiles([]);
+        })
+        .catch((error) => {
+          console.error("Failed to load users", error);
+          toast({
+            variant: "destructive",
+            title: "Erro ao carregar usuários",
+            description: error instanceof Error ? error.message : "Falha ao carregar dados.",
+          });
+        });
+      return;
+    }
+
+    listManagerPath(currentPath, bucket)
       .then((data) => {
         setFolders(data.folders);
         setFiles(data.files);
+        setUsers([]);
       })
       .catch((error) => {
         console.error("Failed to load manager", error);
@@ -51,10 +80,14 @@ const Admin = () => {
           description: error instanceof Error ? error.message : "Falha ao carregar dados.",
         });
       });
-  }, [currentPath, toast]);
+  }, [bucket, currentPath, toast]);
 
-  const canCreateFolder = currentPath === "albuns";
-  const canUploadToPath = currentPath === "home" || currentPath.startsWith("albuns/");
+  const canCreateFolder =
+    (bucket === "site" && currentPath === "albuns") ||
+    (bucket === "clientes" && currentPath === "clientes");
+  const canUploadToPath =
+    (bucket === "site" && (currentPath === "home" || currentPath.startsWith("albuns/"))) ||
+    (bucket === "clientes" && currentPath.startsWith("clientes/"));
 
   const breadcrumbs = useMemo(() => {
     if (!currentPath) return [] as string[];
@@ -62,9 +95,19 @@ const Admin = () => {
   }, [currentPath]);
 
   const refresh = async () => {
-    const data = await listManagerPath(currentPath);
+    const isUsersRoot = bucket === "clientes" && currentPath === "clientes";
+    if (isUsersRoot) {
+      const data = await listUsers();
+      setUsers(data);
+      setFolders([]);
+      setFiles([]);
+      return;
+    }
+
+    const data = await listManagerPath(currentPath, bucket);
     setFolders(data.folders);
     setFiles(data.files);
+    setUsers([]);
   };
 
   const handleDeploy = async () => {
@@ -111,7 +154,10 @@ const Admin = () => {
       toast({
         variant: "destructive",
         title: "Upload indisponível",
-        description: "Faça upload dentro de home/ ou dentro de uma pasta em albuns/.",
+        description:
+          bucket === "clientes"
+            ? "Faça upload dentro de uma pasta em clientes/."
+            : "Faça upload dentro de home/ ou dentro de uma pasta em albuns/.",
       });
       return;
     }
@@ -127,8 +173,8 @@ const Admin = () => {
     setBusy(true);
     try {
       for (const file of pickedFiles) {
-        const cropped = await requestCrop(file, { aspect, title });
-        await uploadImageToPath(currentPath, cropped);
+        const prepared = bucket === "clientes" ? file : await requestCrop(file, { aspect, title });
+        await uploadImageToPath(currentPath, prepared, bucket);
       }
       await refresh();
       toast({ title: "Upload concluído" });
@@ -148,14 +194,58 @@ const Admin = () => {
 
     setBusy(true);
     try {
-      await createFolder(currentPath, folderName.trim());
+      if (bucket === "clientes") {
+        await createUser(folderName.trim());
+      } else {
+        await createFolder(currentPath, folderName.trim(), bucket);
+      }
       await refresh();
-      toast({ title: "Pasta criada" });
+      toast({ title: bucket === "clientes" ? "Usuário criado" : "Pasta criada" });
     } catch (error) {
       toast({
         variant: "destructive",
-        title: "Erro ao criar pasta",
-        description: error instanceof Error ? error.message : "Falha ao criar pasta.",
+        title: bucket === "clientes" ? "Erro ao criar usuário" : "Erro ao criar pasta",
+        description: error instanceof Error ? error.message : "Falha ao criar.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRenameUser = async (user: UserRecord) => {
+    const newName = window.prompt("Novo nome do cliente:", user.name);
+    if (!newName || newName.trim() === user.name) return;
+
+    setBusy(true);
+    try {
+      await updateUser(user.id, { name: newName.trim() });
+      await refresh();
+      toast({ title: "Usuário atualizado" });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Erro ao atualizar usuário",
+        description: error instanceof Error ? error.message : "Falha ao atualizar.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeleteUser = async (user: UserRecord) => {
+    const ok = window.confirm(`Apagar o usuário '${user.name}' e todas as fotos?`);
+    if (!ok) return;
+
+    setBusy(true);
+    try {
+      await deleteUser(user.id);
+      await refresh();
+      toast({ title: "Usuário apagado" });
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Erro ao apagar usuário",
+        description: error instanceof Error ? error.message : "Falha ao apagar.",
       });
     } finally {
       setBusy(false);
@@ -168,7 +258,7 @@ const Admin = () => {
 
     setBusy(true);
     try {
-      await renameFolder(folder.path, newName.trim());
+      await renameFolder(folder.path, newName.trim(), bucket);
       await refresh();
       toast({ title: "Pasta renomeada" });
     } catch (error) {
@@ -188,7 +278,7 @@ const Admin = () => {
 
     setBusy(true);
     try {
-      await deleteFolder(folder.path);
+      await deleteFolder(folder.path, bucket);
       await refresh();
       toast({ title: "Pasta apagada" });
     } catch (error) {
@@ -208,7 +298,7 @@ const Admin = () => {
 
     setBusy(true);
     try {
-      await renameFile(file.path, newName.trim());
+      await renameFile(file.path, newName.trim(), bucket);
       await refresh();
       toast({ title: "Arquivo renomeado" });
     } catch (error) {
@@ -228,7 +318,7 @@ const Admin = () => {
 
     setBusy(true);
     try {
-      await deleteFile(file.path);
+      await deleteFile(file.path, bucket);
       await refresh();
       toast({ title: "Arquivo apagado" });
     } catch (error) {
@@ -255,6 +345,31 @@ const Admin = () => {
             <Button variant="outline" disabled={busy} onClick={handleDeploy}>
               {busy ? "Processando..." : "Deploy"}
             </Button>
+
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant={bucket === "site" ? "default" : "outline"}
+                disabled={busy}
+                onClick={() => {
+                  setBucket("site");
+                  setCurrentPath("");
+                }}
+              >
+                Site
+              </Button>
+              <Button
+                size="sm"
+                variant={bucket === "clientes" ? "default" : "outline"}
+                disabled={busy}
+                onClick={() => {
+                  setBucket("clientes");
+                  setCurrentPath("clientes");
+                }}
+              >
+                Clientes
+              </Button>
+            </div>
           </div>
         </header>
 
@@ -278,19 +393,72 @@ const Admin = () => {
           </div>
 
           {!canUploadToPath && (
-            <p className="text-xs text-muted-foreground">Upload só disponível em home/ ou dentro de uma pasta em albuns/.</p>
+            <p className="text-xs text-muted-foreground">
+              {bucket === "clientes"
+                ? "Upload só disponível dentro de uma pasta em clientes/."
+                : "Upload só disponível em home/ ou dentro de uma pasta em albuns/."}
+            </p>
           )}
           {!canCreateFolder && (
-            <p className="text-xs text-muted-foreground">Criar pasta só disponível quando estiver em albuns/.</p>
+            <p className="text-xs text-muted-foreground">
+              {bucket === "clientes"
+                ? "Criar pasta só disponível quando estiver em clientes/."
+                : "Criar pasta só disponível quando estiver em albuns/."}
+            </p>
           )}
         </section>
 
         <section className="rounded-lg border border-border/60 bg-card p-5 space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">Pastas</h2>
           <ul className="space-y-2">
+            {bucket === "clientes" && currentPath === "clientes" &&
+              users.map((user) => (
+                <li
+                  key={user.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded border border-border/40 px-3 py-2"
+                >
+                  <span className="flex items-center gap-2 text-left text-sm">
+                    <User className="h-4 w-4" />
+                    {user.name}
+                    <span className="text-xs text-muted-foreground">({user.code})</span>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="rounded-md border border-border/40 p-2 hover:bg-accent"
+                      onClick={() => setCurrentPath(`clientes/${user.id}`)}
+                      aria-label="Abrir usuário"
+                      type="button"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+
+                    <button
+                      className="rounded-md border border-border/40 p-2 hover:bg-accent disabled:opacity-50"
+                      onClick={() => handleRenameUser(user)}
+                      aria-label="Renomear usuário"
+                      type="button"
+                      disabled={busy}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button
+                      className="rounded-md border border-border/40 p-2 hover:bg-accent disabled:opacity-50"
+                      onClick={() => handleDeleteUser(user)}
+                      aria-label="Apagar usuário"
+                      type="button"
+                      disabled={busy}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </li>
+              ))}
+
             {folders.map((folder) => {
-              const isRoot = folder.path === "home" || folder.path === "albuns";
-              const canEdit = folder.path.startsWith("albuns/") && !isRoot;
+              const isRoot = folder.path === "home" || folder.path === "albuns" || folder.path === "clientes";
+              const canEdit =
+                (bucket === "site" && folder.path.startsWith("albuns/") && !isRoot) ||
+                (bucket === "clientes" && folder.path.startsWith("clientes/") && !isRoot);
 
               return (
                 <li
@@ -335,7 +503,7 @@ const Admin = () => {
               );
             })}
 
-            {folders.length === 0 && (
+            {folders.length === 0 && users.length === 0 && (
               <li className="text-sm text-muted-foreground">Nenhuma pasta encontrada.</li>
             )}
           </ul>

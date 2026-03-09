@@ -1,12 +1,18 @@
 import { useState, useEffect } from "react";
 import { motion, useMotionValueEvent, useScroll } from "framer-motion";
 import { Camera, Menu, X } from "lucide-react";
+import { Link } from "react-router-dom";
 const navItems = [
   { label: "Inicio", href: "#home" },
   { label: "Álbuns", href: "#albuns" },
   { label: "Sobre", href: "#sobre" },
   { label: "Contato", href: "#contato" },
+  { label: "Clientes", href: "/clientes" },
 ];
+
+function isRoute(href: string) {
+  return href.startsWith("/");
+}
 
 const Header = () => {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -37,13 +43,23 @@ const Header = () => {
       {/* Desktop nav */}
       <nav className="hidden md:flex gap-8 text-[13px] font-medium tracking-[0.2em] uppercase">
         {navItems.map((item) => (
-          <a
-            key={item.href}
-            href={item.href}
-            className="text-muted-foreground hover:text-foreground transition-colors duration-200"
-          >
-            {item.label}
-          </a>
+          isRoute(item.href) ? (
+            <Link
+              key={item.href}
+              to={item.href}
+              className="text-muted-foreground hover:text-foreground transition-colors duration-200"
+            >
+              {item.label}
+            </Link>
+          ) : (
+            <a
+              key={item.href}
+              href={item.href}
+              className="text-muted-foreground hover:text-foreground transition-colors duration-200"
+            >
+              {item.label}
+            </a>
+          )
         ))}
       </nav>
 
@@ -70,14 +86,25 @@ const Header = () => {
           </div>
 
           {navItems.map((item) => (
-            <a
-              key={item.href}
-              href={item.href}
-              onClick={() => setMenuOpen(false)}
-              className="relative z-10 text-sm tracking-[0.2em] uppercase text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {item.label}
-            </a>
+            isRoute(item.href) ? (
+              <Link
+                key={item.href}
+                to={item.href}
+                onClick={() => setMenuOpen(false)}
+                className="relative z-10 text-sm tracking-[0.2em] uppercase text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {item.label}
+              </Link>
+            ) : (
+              <a
+                key={item.href}
+                href={item.href}
+                onClick={() => setMenuOpen(false)}
+                className="relative z-10 text-sm tracking-[0.2em] uppercase text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {item.label}
+              </a>
+            )
           ))}
         </motion.div>
       )}

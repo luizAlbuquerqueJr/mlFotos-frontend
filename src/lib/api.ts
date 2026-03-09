@@ -20,6 +20,101 @@ const NOTIFY_URL =
     ? "https://us-central1-fotografia-488219.cloudfunctions.net/notify-access"
     : "http://localhost:8082");
 
+const USERS_URL =
+  readEnvUrl(import.meta.env.VITE_USERS_URL) ??
+  (import.meta.env.PROD
+    ? "https://us-central1-fotografia-488219.cloudfunctions.net/users"
+    : "http://localhost:8090/users");
+
+export type StorageBucketKey = "site" | "clientes";
+
+export interface UserRecord {
+  id: string;
+  name: string;
+  code: string;
+}
+
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    mode: "cors",
+    ...init,
+  });
+
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`Falha na requisição: ${response.status} ${details}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    const details = await response.text();
+    throw new Error(`Resposta inválida do servidor (esperado JSON) em ${url}: ${response.status} ${details.slice(0, 200)}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+export async function listUsers(): Promise<UserRecord[]> {
+  const payload = await fetchJson<{ users?: Array<Partial<UserRecord>> }>(USERS_URL, { method: "GET" });
+  return (payload.users ?? [])
+    .filter((u) => typeof u.id === "string" && typeof u.name === "string" && typeof u.code === "string")
+    .map((u) => ({ id: u.id as string, name: u.name as string, code: u.code as string }));
+}
+
+export async function getUserByCode(code: string): Promise<UserRecord> {
+  const normalized = String(code || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+  if (!normalized) {
+    throw new Error("Informe o código do cliente");
+  }
+
+  if (!/^[A-HJ-NP-Z2-9]{12}$/.test(normalized)) {
+    throw new Error("Código inválido. Verifique se ele tem 12 caracteres.");
+  }
+
+  const payload = await fetchJson<{ user?: Partial<UserRecord> }>(
+    `${USERS_URL}/by-code/${encodeURIComponent(normalized)}`,
+    { method: "GET" }
+  );
+
+  const user = payload.user;
+  if (!user || typeof user.id !== "string" || typeof user.name !== "string" || typeof user.code !== "string") {
+    throw new Error("Resposta inválida ao validar código");
+  }
+
+  return { id: user.id, name: user.name, code: user.code };
+}
+
+export async function createUser(name: string): Promise<UserRecord> {
+  const payload = await fetchJson<Partial<UserRecord>>(USERS_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+
+  if (!payload.id || !payload.name || !payload.code) {
+    throw new Error("Resposta inválida ao criar usuário");
+  }
+
+  return { id: payload.id, name: payload.name, code: payload.code };
+}
+
+export async function updateUser(id: string, patch: { name?: string }): Promise<void> {
+  await fetchJson<{ ok?: boolean }>(`${USERS_URL}/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function deleteUser(id: string): Promise<void> {
+  await fetchJson<{ ok?: boolean }>(`${USERS_URL}/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 interface ClientGeo {
   ip: string;
   location: string | null;
@@ -46,8 +141,19 @@ function parseManagerPayload(payload: unknown): ManagerListing {
   };
 }
 
-async function postStorageOperation<T>(body: Record<string, unknown>): Promise<T> {
-  const response = await fetch(STORAGE_UPLOAD_URL, {
+function withBucketQuery(url: string, bucket: StorageBucketKey): string {
+  const hasQuery = url.includes("?");
+  return `${url}${hasQuery ? "&" : "?"}bucket=${encodeURIComponent(bucket)}`;
+}
+
+async function postStorageOperation<T>(
+  body: Record<string, unknown>,
+  opts?: { bucket?: StorageBucketKey }
+): Promise<T> {
+  const bucket = opts?.bucket ?? "site";
+  const url = withBucketQuery(STORAGE_UPLOAD_URL, bucket);
+
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -64,9 +170,7 @@ async function postStorageOperation<T>(body: Record<string, unknown>): Promise<T
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
     const details = await response.text();
-    throw new Error(
-      `Resposta inválida do servidor (esperado JSON) em ${STORAGE_UPLOAD_URL}: ${response.status} ${details.slice(0, 200)}`
-    );
+    throw new Error(`Resposta inválida do servidor (esperado JSON) em ${url}: ${response.status} ${details.slice(0, 200)}`);
   }
 
   return (await response.json()) as T;
@@ -241,19 +345,25 @@ export async function fetchSiteData(): Promise<SiteData> {
   return parseStorageListPayload(data);
 }
 
-export async function listManagerPath(path = ""): Promise<ManagerListing> {
-  const payload = await postStorageOperation<unknown>({
+export async function listManagerPath(path = "", bucket: StorageBucketKey = "site"): Promise<ManagerListing> {
+  const payload = await postStorageOperation<unknown>(
+    {
     operation: "listManager",
     currentPath: path,
-  });
+    },
+    { bucket }
+  );
 
   return parseManagerPayload(payload);
 }
 
 export async function buildManifest(): Promise<string> {
-  const payload = await postStorageOperation<{ url?: string }>({
-    operation: "buildManifest",
-  });
+  const payload = await postStorageOperation<{ url?: string }>(
+    {
+      operation: "buildManifest",
+    },
+    { bucket: "site" }
+  );
 
   if (!payload.url) {
     throw new Error("Resposta inválida ao gerar manifest");
@@ -285,14 +395,17 @@ export async function uploadImage(input: UploadImageInput): Promise<UploadedImag
 
   const fileDataBase64 = await readFileAsBase64(input.file);
 
-  const payload = await postStorageOperation<Partial<UploadedImage>>({
-    operation: "upload",
-    category: input.category,
-    albumName: input.albumName,
-    fileName: input.file.name,
-    contentType: input.file.type,
-    fileDataBase64,
-  });
+  const payload = await postStorageOperation<Partial<UploadedImage>>(
+    {
+      operation: "upload",
+      category: input.category,
+      albumName: input.albumName,
+      fileName: input.file.name,
+      contentType: input.file.type,
+      fileDataBase64,
+    },
+    { bucket: "site" }
+  );
 
   if (!payload.path || !payload.url) {
     throw new Error("Resposta de upload inválida");
@@ -304,16 +417,23 @@ export async function uploadImage(input: UploadImageInput): Promise<UploadedImag
   };
 }
 
-export async function uploadImageToPath(folderPath: string, file: File): Promise<UploadedImage> {
+export async function uploadImageToPath(
+  folderPath: string,
+  file: File,
+  bucket: StorageBucketKey = "site"
+): Promise<UploadedImage> {
   const fileDataBase64 = await readFileAsBase64(file);
 
-  const payload = await postStorageOperation<Partial<UploadedImage>>({
-    operation: "upload",
-    folderPath,
-    fileName: file.name,
-    contentType: file.type,
-    fileDataBase64,
-  });
+  const payload = await postStorageOperation<Partial<UploadedImage>>(
+    {
+      operation: "upload",
+      folderPath,
+      fileName: file.name,
+      contentType: file.type,
+      fileDataBase64,
+    },
+    { bucket }
+  );
 
   if (!payload.path || !payload.url) {
     throw new Error("Resposta de upload inválida");
@@ -325,12 +445,19 @@ export async function uploadImageToPath(folderPath: string, file: File): Promise
   };
 }
 
-export async function createFolder(parentPath: string, name: string): Promise<string> {
-  const payload = await postStorageOperation<{ path?: string }>({
-    operation: "createFolder",
-    parentPath,
-    newName: name,
-  });
+export async function createFolder(
+  parentPath: string,
+  name: string,
+  bucket: StorageBucketKey = "site"
+): Promise<string> {
+  const payload = await postStorageOperation<{ path?: string }>(
+    {
+      operation: "createFolder",
+      parentPath,
+      newName: name,
+    },
+    { bucket }
+  );
 
   if (!payload.path) {
     throw new Error("Resposta inválida ao criar pasta");
@@ -339,12 +466,19 @@ export async function createFolder(parentPath: string, name: string): Promise<st
   return payload.path;
 }
 
-export async function renameFolder(folderPath: string, name: string): Promise<string> {
-  const payload = await postStorageOperation<{ path?: string }>({
-    operation: "renameFolder",
-    folderPath,
-    newName: name,
-  });
+export async function renameFolder(
+  folderPath: string,
+  name: string,
+  bucket: StorageBucketKey = "site"
+): Promise<string> {
+  const payload = await postStorageOperation<{ path?: string }>(
+    {
+      operation: "renameFolder",
+      folderPath,
+      newName: name,
+    },
+    { bucket }
+  );
 
   if (!payload.path) {
     throw new Error("Resposta inválida ao renomear pasta");
@@ -353,19 +487,29 @@ export async function renameFolder(folderPath: string, name: string): Promise<st
   return payload.path;
 }
 
-export async function deleteFolder(folderPath: string): Promise<void> {
-  await postStorageOperation<{ ok?: boolean }>({
-    operation: "deleteFolder",
-    folderPath,
-  });
+export async function deleteFolder(folderPath: string, bucket: StorageBucketKey = "site"): Promise<void> {
+  await postStorageOperation<{ ok?: boolean }>(
+    {
+      operation: "deleteFolder",
+      folderPath,
+    },
+    { bucket }
+  );
 }
 
-export async function renameFile(filePath: string, name: string): Promise<string> {
-  const payload = await postStorageOperation<{ path?: string }>({
-    operation: "renameFile",
-    filePath,
-    newName: name,
-  });
+export async function renameFile(
+  filePath: string,
+  name: string,
+  bucket: StorageBucketKey = "site"
+): Promise<string> {
+  const payload = await postStorageOperation<{ path?: string }>(
+    {
+      operation: "renameFile",
+      filePath,
+      newName: name,
+    },
+    { bucket }
+  );
 
   if (!payload.path) {
     throw new Error("Resposta inválida ao renomear arquivo");
@@ -374,11 +518,14 @@ export async function renameFile(filePath: string, name: string): Promise<string
   return payload.path;
 }
 
-export async function deleteFile(filePath: string): Promise<void> {
-  await postStorageOperation<{ ok?: boolean }>({
-    operation: "deleteFile",
-    filePath,
-  });
+export async function deleteFile(filePath: string, bucket: StorageBucketKey = "site"): Promise<void> {
+  await postStorageOperation<{ ok?: boolean }>(
+    {
+      operation: "deleteFile",
+      filePath,
+    },
+    { bucket }
+  );
 }
 
 export async function notifyAccess(path: string): Promise<void> {
