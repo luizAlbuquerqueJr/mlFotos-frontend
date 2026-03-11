@@ -373,8 +373,8 @@ const ClientGallery = () => {
               <div className="space-y-1">
                 <h2 className={
                   mustReadBestPractices
-                    ? "text-base font-extrabold tracking-[0.2em] text-primary"
-                    : "text-base font-extrabold tracking-[0.2em] text-foreground"
+                    ? "text-xl font-bold tracking-normal leading-snug text-primary"
+                    : "text-xl font-bold tracking-normal leading-snug text-foreground"
                 }>
                   Boas práticas para arrasar nas redes sociais
                 </h2>

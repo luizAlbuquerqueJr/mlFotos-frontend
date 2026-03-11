@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronRight, FileUp, FolderPlus, Loader2, MessageCircle, Pencil, Trash2, User } from "lucide-react";
+import { ChevronRight, FileUp, FolderPlus, Loader2, Pencil, Trash2, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ImageCropDialog from "@/components/ImageCropDialog";
 import { useToast } from "@/hooks/use-toast";
@@ -24,6 +24,19 @@ import {
   type ManagerFolderItem,
   uploadImageToPath,
 } from "@/lib/api";
+
+const WhatsAppIcon = ({ className }: { className?: string }) => (
+  <svg
+    viewBox="0 0 32 32"
+    fill="currentColor"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+    aria-hidden="true"
+    focusable="false"
+  >
+    <path d="M16 3C8.84 3 3 8.676 3 15.67c0 2.791.94 5.36 2.522 7.446L4 29l5.99-1.497A13.267 13.267 0 0 0 16 28.34c7.16 0 13-5.676 13-12.67C29 8.676 23.16 3 16 3Zm0 23.004c-2.03 0-4.01-.53-5.728-1.53l-.412-.242-3.55.887.95-3.37-.269-.42A10.88 10.88 0 0 1 5.12 15.67C5.12 9.85 10.024 5.1 16 5.1c5.976 0 10.88 4.75 10.88 10.57 0 5.82-4.904 10.334-10.88 10.334Zm6.117-7.743c-.334-.166-1.97-.957-2.274-1.066-.305-.11-.527-.166-.75.166-.222.333-.86 1.066-1.055 1.285-.195.222-.389.25-.723.083-.334-.166-1.41-.512-2.685-1.632-.992-.86-1.662-1.922-1.857-2.255-.195-.333-.02-.513.146-.679.151-.151.334-.389.5-.583.166-.195.222-.333.334-.555.11-.222.055-.417-.028-.583-.083-.166-.75-1.785-1.028-2.447-.27-.646-.545-.558-.75-.568l-.64-.013a1.23 1.23 0 0 0-.89.416c-.305.333-1.166 1.121-1.166 2.73 0 1.609 1.194 3.163 1.36 3.385.166.222 2.35 3.58 5.688 5.02.794.334 1.414.533 1.897.683.797.244 1.524.21 2.098.128.64-.096 1.97-.791 2.247-1.555.278-.763.278-1.414.195-1.555-.083-.138-.305-.222-.64-.389Z" />
+  </svg>
+);
 
 const Admin = () => {
   const { toast } = useToast();
@@ -171,7 +184,10 @@ const Admin = () => {
 
   const handleShareUserWhatsapp = (user: UserRecord) => {
     const url = `${window.location.origin}/clientes?id=${encodeURIComponent(user.id)}`;
-    const text = `Olá ${user.name}! Aqui está o link das suas fotos: ${url}`;
+    const text = `Olá ${user.name}! 
+Aqui está o link para acessar suas fotos: ${url}.  
+Recomendamos dar uma olhada na seção “Boas práticas para arrasar nas redes sociais” para aproveitar ainda mais suas imagens.  
+E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotografia. Vamos adorar ver suas fotos por lá!`;
     const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
     window.open(whatsappUrl, "_blank", "noopener,noreferrer");
   };
@@ -507,7 +523,7 @@ const Admin = () => {
                       disabled={busy}
                       title="Compartilhar link no WhatsApp"
                     >
-                      <MessageCircle className="h-4 w-4" />
+                      <WhatsAppIcon className="h-4 w-4" />
                     </button>
 
                     <button
