@@ -8,7 +8,6 @@ import Header from "@/components/Header";
 import PhotoViewer from "@/components/PhotoViewer";
 import { useToast } from "@/hooks/use-toast";
 import {
-  getClientPhotosZipUrl,
   getUserById,
   listManagerPath,
   type ManagerFileItem,
@@ -32,14 +31,23 @@ function normalizeClientId(value: string) {
 }
 
 async function downloadFromUrl(url: string, filename: string) {
+  const res = await fetch(url, { method: "GET" });
+  if (!res.ok) {
+    throw new Error(`Falha ao baixar arquivo: ${res.status}`);
+  }
+
+  const blob = await res.blob();
+  const blobUrl = URL.createObjectURL(blob);
+
   const a = document.createElement("a");
-  a.href = url;
+  a.href = blobUrl;
   a.download = filename || "download";
   a.rel = "noopener";
-  a.target = "_blank";
   document.body.appendChild(a);
   a.click();
   a.remove();
+
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
 }
 
 const ClientGallery = () => {
@@ -61,6 +69,7 @@ const ClientGallery = () => {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [downloadingAll, setDownloadingAll] = useState(false);
+  const [downloadAllProgress, setDownloadAllProgress] = useState(0);
   const [mustReadBestPractices, setMustReadBestPractices] = useState(false);
   const [bestPracticesProgress, setBestPracticesProgress] = useState(0);
   const [bestPracticesProgressDone, setBestPracticesProgressDone] = useState(false);
@@ -84,6 +93,28 @@ const ClientGallery = () => {
     const listing = await listManagerPath(folderPath, bucket);
     setFolders(listing.folders);
     setFiles(listing.files);
+  };
+
+  const listAllClientFilesRecursive = async (clientRootPath: string) => {
+    const all: ManagerFileItem[] = [];
+    const queue: string[] = [clientRootPath];
+
+    while (queue.length > 0) {
+      const nextPath = queue.shift();
+      if (!nextPath) continue;
+      const listing = await listManagerPath(nextPath, "clientes");
+
+      for (const folder of listing.folders) {
+        if (folder?.path) queue.push(folder.path);
+      }
+
+      for (const file of listing.files) {
+        if (file.name === ".keep") continue;
+        all.push(file);
+      }
+    }
+
+    return all;
   };
 
   useEffect(() => {
@@ -242,10 +273,40 @@ const ClientGallery = () => {
   const handleDownloadAll = async () => {
     if (!user) return;
     setDownloadingAll(true);
+    setDownloadAllProgress(0);
     try {
-      const zipUrl = getClientPhotosZipUrl(user.id);
-      await downloadFromUrl(zipUrl, `fotos-${user.id}.zip`);
-      toast({ title: "Download iniciado" });
+      const rootPath = `clientes/${user.id}`;
+      const allFiles = await listAllClientFilesRecursive(rootPath);
+      const total = allFiles.length;
+      if (total === 0) {
+        toast({
+          variant: "destructive",
+          title: "Nada para baixar",
+          description: "Nenhuma foto disponível no momento.",
+        });
+        return;
+      }
+
+      let failures = 0;
+
+      for (let i = 0; i < allFiles.length; i += 1) {
+        const file = allFiles[i];
+        try {
+          await downloadFromUrl(file.url, file.name);
+        } catch {
+          failures += 1;
+        }
+
+        const pct = Math.min(100, Math.round(((i + 1) / total) * 100));
+        setDownloadAllProgress(pct);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+
+      setDownloadAllProgress(100);
+      toast({
+        title: "Fotos baixadas",
+        description: failures > 0 ? `${failures} arquivo(s) não puderam ser baixados.` : undefined,
+      });
     } catch (error) {
       toast({
         variant: "destructive",
@@ -335,19 +396,27 @@ const ClientGallery = () => {
           <div className="space-y-3 text-base text-muted-foreground">
             <ul className="list-disc pl-5 space-y-2">
               <li>
-                Para manter a melhor qualidade ao postar no WhatsApp e no Instagram, prefira baixar a foto e publicar o arquivo
-                original (evite "reenviar" várias vezes a mesma imagem).
+                <span className="text-foreground">Quer postar com qualidade máxima? ✨</span> Baixe a foto e poste o arquivo original (evite "reenviar" várias vezes a mesma
+                imagem, porque isso prejudica a qualidade).
               </li>
               <li>
-                No WhatsApp, se possível, envie como <span className="text-foreground">Documento</span> para evitar compressão. Ou se enviar como imagem, lembre de colocar o formato HD.
+                No WhatsApp, se puder, envie como <span className="text-foreground">Documento</span> 📄 (assim não comprime). Se
+                mandar como imagem, marque a opção de HD 😎.
               </li>
               <li>
-                No Instagram, evite capturas de tela e edições repetidas; publique a foto direto do arquivo e, se for recortar,
-                faça isso apenas uma vez.
+                <span className="text-foreground">No Instagram, fuja de print/screenshot 📸 e de ficar editando mil vezes</span>. Poste direto do arquivo e, se for recortar,
+                recorte só uma vez.
               </li>
               <li>
-                Evite fotos em formato de <span className="text-foreground">grid</span> (por exemplo, 4 fotos em uma só), pois
-                isso reduz a resolução de cada foto e pode deixar a imagem com aparência de baixa qualidade.
+                <span className="text-foreground"> Evite montar grid (tipo 4 fotos em 1) </span>. Isso diminui a resolução e pode
+                deixar a imagem com cara de baixa qualidade.
+              </li>
+              <li>
+                Na hora de baixar, garanta uma internet estável para não travar no meio. <span className="text-foreground">Evite dados móveis</span>, as
+                fotos são pesadinhas e podem consumir seu pacote rapidinho 😅.
+              </li>
+              <li>
+                <span className="text-foreground">Guardaremos suas fotos por até 3 meses.</span> Após esse período, a responsabilidade de manter os arquivos salvos será sua, combinado? 🤗
               </li>
             </ul>
 
@@ -416,10 +485,17 @@ const ClientGallery = () => {
                   )}
                 </div>
 
-                <Button variant="outline" size="sm" onClick={() => void handleDownloadAll()} disabled={downloadingAll}>
-                  {downloadingAll ? "Baixando..." : "Baixar todas"}
+                <Button className="w-full" variant="outline" size="sm" onClick={() => void handleDownloadAll()} disabled={downloadingAll}>
+                  {downloadingAll ? "Baixando..." : "Baixar todas as imagens"}
                 </Button>
               </div>
+
+              {downloadingAll && (
+                <div className="space-y-2">
+                  <Progress value={downloadAllProgress} />
+                  <p className="text-sm text-muted-foreground">{downloadAllProgress}% concluído</p>
+                </div>
+              )}
             </div>
           )}
 
