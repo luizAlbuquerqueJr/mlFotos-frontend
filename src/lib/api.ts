@@ -23,7 +23,7 @@ const NOTIFY_URL =
 const USERS_URL =
   readEnvUrl(import.meta.env.VITE_USERS_URL) ??
   (import.meta.env.PROD
-    ? "https://us-central1-fotografia-488219.cloudfunctions.net/users"
+    ? "https://mlfotos-api-512158927105.us-central1.run.app/users"
     : "http://localhost:8090/users");
 
 export type StorageBucketKey = "site" | "clientes";
