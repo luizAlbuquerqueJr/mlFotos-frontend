@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronRight, FileUp, FolderPlus, Pencil, Trash2, User } from "lucide-react";
+import { ChevronRight, FileUp, FolderPlus, Loader2, MessageCircle, Pencil, Trash2, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import ImageCropDialog from "@/components/ImageCropDialog";
 import { useToast } from "@/hooks/use-toast";
 import { cropImageFile, type CropAreaPixels } from "@/lib/imageCrop";
@@ -14,6 +12,7 @@ import {
   deleteFile,
   deleteUser,
   deleteFolder,
+  getUserById,
   listUsers,
   listManagerPath,
   renameFile,
@@ -34,6 +33,8 @@ const Admin = () => {
   const [files, setFiles] = useState<ManagerFileItem[]>([]);
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [currentClientName, setCurrentClientName] = useState<string>("");
 
   const [cropOpen, setCropOpen] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
@@ -46,45 +47,84 @@ const Admin = () => {
   const cropRejectRef = useRef<((reason?: unknown) => void) | null>(null);
 
   useEffect(() => {
-    const isUsersRoot = bucket === "clientes" && currentPath === "clientes";
+    let cancelled = false;
 
-    if (isUsersRoot) {
-      listUsers()
-        .then((data) => {
+    const run = async () => {
+      setLoading(true);
+      const isUsersRoot = bucket === "clientes" && currentPath === "clientes";
+
+      try {
+        if (isUsersRoot) {
+          const data = await listUsers();
+          if (cancelled) return;
           setUsers(data);
           setFolders([]);
           setFiles([]);
-        })
-        .catch((error) => {
-          console.error("Failed to load users", error);
-          toast({
-            variant: "destructive",
-            title: "Erro ao carregar usuários",
-            description: error instanceof Error ? error.message : "Falha ao carregar dados.",
-          });
-        });
-      return;
-    }
+          return;
+        }
 
-    listManagerPath(currentPath, bucket)
-      .then((data) => {
+        const data = await listManagerPath(currentPath, bucket);
+        if (cancelled) return;
         setFolders(data.folders);
         setFiles(data.files);
         setUsers([]);
-      })
-      .catch((error) => {
-        console.error("Failed to load manager", error);
+      } catch (error) {
+        if (cancelled) return;
+        const isUsersRootNow = bucket === "clientes" && currentPath === "clientes";
+        console.error(isUsersRootNow ? "Failed to load users" : "Failed to load manager", error);
         toast({
           variant: "destructive",
-          title: "Erro ao carregar gerenciador",
+          title: isUsersRootNow ? "Erro ao carregar usuários" : "Erro ao carregar gerenciador",
           description: error instanceof Error ? error.message : "Falha ao carregar dados.",
         });
-      });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
   }, [bucket, currentPath, toast]);
 
+  const currentClientId = useMemo(() => {
+    if (bucket !== "clientes") return "";
+    if (!currentPath.startsWith("clientes/")) return "";
+
+    const parts = currentPath.split("/").filter(Boolean);
+    return parts.length >= 2 ? parts[1] : "";
+  }, [bucket, currentPath]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      if (!currentClientId) {
+        setCurrentClientName("");
+        return;
+      }
+
+      try {
+        const user = await getUserById(currentClientId);
+        if (cancelled) return;
+        setCurrentClientName(user.name);
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Failed to load client name", error);
+        setCurrentClientName("");
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentClientId]);
+
   const canCreateFolder =
-    (bucket === "site" && currentPath === "albuns") ||
-    (bucket === "clientes" && currentPath === "clientes");
+    (bucket === "site" && (currentPath === "albuns" || currentPath.startsWith("albuns/"))) ||
+    (bucket === "clientes" && (currentPath === "clientes" || currentPath.startsWith("clientes/")));
   const canUploadToPath =
     (bucket === "site" && (currentPath === "home" || currentPath.startsWith("albuns/"))) ||
     (bucket === "clientes" && currentPath.startsWith("clientes/"));
@@ -127,6 +167,13 @@ const Admin = () => {
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleShareUserWhatsapp = (user: UserRecord) => {
+    const url = `${window.location.origin}/clientes?id=${encodeURIComponent(user.id)}`;
+    const text = `Olá ${user.name}! Aqui está o link das suas fotos: ${url}`;
+    const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(whatsappUrl, "_blank", "noopener,noreferrer");
   };
 
    const requestCrop = async (file: File, opts: { aspect: number; title: string }): Promise<File> => {
@@ -194,17 +241,20 @@ const Admin = () => {
 
     setBusy(true);
     try {
-      if (bucket === "clientes") {
-        await createUser(folderName.trim());
+      const normalized = folderName.trim();
+      const isUsersRoot = bucket === "clientes" && currentPath === "clientes";
+
+      if (isUsersRoot) {
+        await createUser(normalized);
       } else {
-        await createFolder(currentPath, folderName.trim(), bucket);
+        await createFolder(currentPath, normalized, bucket);
       }
       await refresh();
-      toast({ title: bucket === "clientes" ? "Usuário criado" : "Pasta criada" });
+      toast({ title: isUsersRoot ? "Usuário criado" : "Pasta criada" });
     } catch (error) {
       toast({
         variant: "destructive",
-        title: bucket === "clientes" ? "Erro ao criar usuário" : "Erro ao criar pasta",
+        title: bucket === "clientes" && currentPath === "clientes" ? "Erro ao criar usuário" : "Erro ao criar pasta",
         description: error instanceof Error ? error.message : "Falha ao criar.",
       });
     } finally {
@@ -337,13 +387,19 @@ const Admin = () => {
       <div className="mx-auto max-w-5xl space-y-6">
         <header className="space-y-2">
           <p className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Painel administrativo</p>
-          <h1 className="text-3xl" style={{ fontFamily: "var(--font-serif)" }}>Gerenciador de arquivos</h1>
+          <h1 className="text-3xl" style={{ fontFamily: "var(--font-serif)" }}>
+            Gerenciador de arquivos
+          </h1>
+
+          {bucket === "clientes" && currentClientId && currentClientName && (
+            <p className="text-sm text-muted-foreground">
+              Cliente: <span className="text-foreground">{currentClientName}</span>
+            </p>
+          )}
+
           <div className="flex flex-wrap items-center gap-4">
             <Button asChild variant="link" className="px-0">
               <Link to="/">Voltar para o site</Link>
-            </Button>
-            <Button variant="outline" disabled={busy} onClick={handleDeploy}>
-              {busy ? "Processando..." : "Deploy"}
             </Button>
 
             <div className="flex items-center gap-2">
@@ -352,6 +408,7 @@ const Admin = () => {
                 variant={bucket === "site" ? "default" : "outline"}
                 disabled={busy}
                 onClick={() => {
+                  setLoading(true);
                   setBucket("site");
                   setCurrentPath("");
                 }}
@@ -363,6 +420,7 @@ const Admin = () => {
                 variant={bucket === "clientes" ? "default" : "outline"}
                 disabled={busy}
                 onClick={() => {
+                  setLoading(true);
                   setBucket("clientes");
                   setCurrentPath("clientes");
                 }}
@@ -371,11 +429,23 @@ const Admin = () => {
               </Button>
             </div>
           </div>
+
+          {bucket === "site" && (
+            <div>
+              <Button variant="outline" disabled={busy} onClick={handleDeploy}>
+                {busy ? "Processando..." : "Deploy"}
+              </Button>
+            </div>
+          )}
         </header>
 
         <section className="rounded-lg border border-border/60 bg-card p-5 space-y-4">
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <Button size="sm" variant="outline" onClick={() => setCurrentPath("")}>Raiz</Button>
+            <Button size="sm" variant="outline" onClick={() => setCurrentPath("")}
+            >
+              Raiz
+            </Button>
+
             {breadcrumbs.map((segment, index) => {
               const path = breadcrumbs.slice(0, index + 1).join("/");
               return (
@@ -411,6 +481,13 @@ const Admin = () => {
         <section className="rounded-lg border border-border/60 bg-card p-5 space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">Pastas</h2>
           <ul className="space-y-2">
+            {loading && (
+              <li className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Carregando...
+              </li>
+            )}
+
             {bucket === "clientes" && currentPath === "clientes" &&
               users.map((user) => (
                 <li
@@ -420,9 +497,19 @@ const Admin = () => {
                   <span className="flex items-center gap-2 text-left text-sm">
                     <User className="h-4 w-4" />
                     {user.name}
-                    <span className="text-xs text-muted-foreground">({user.code})</span>
                   </span>
                   <div className="flex items-center gap-2">
+                    <button
+                      className="rounded-md border border-border/40 p-2 hover:bg-accent disabled:opacity-50"
+                      onClick={() => handleShareUserWhatsapp(user)}
+                      aria-label="Compartilhar no WhatsApp"
+                      type="button"
+                      disabled={busy}
+                      title="Compartilhar link no WhatsApp"
+                    >
+                      <MessageCircle className="h-4 w-4" />
+                    </button>
+
                     <button
                       className="rounded-md border border-border/40 p-2 hover:bg-accent"
                       onClick={() => setCurrentPath(`clientes/${user.id}`)}
@@ -503,7 +590,7 @@ const Admin = () => {
               );
             })}
 
-            {folders.length === 0 && users.length === 0 && (
+            {folders.length === 0 && users.length === 0 && !loading && (
               <li className="text-sm text-muted-foreground">Nenhuma pasta encontrada.</li>
             )}
           </ul>
@@ -543,7 +630,7 @@ const Admin = () => {
               </li>
             ))}
 
-            {files.length === 0 && (
+            {files.length === 0 && !loading && (
               <li className="text-sm text-muted-foreground">Nenhum arquivo neste diretório.</li>
             )}
           </ul>
@@ -565,13 +652,18 @@ const Admin = () => {
         }}
       />
 
-      {!canCreateFolder && canUploadToPath && (
+      {canUploadToPath && (
         <button
           type="button"
           aria-label="Upload"
           disabled={busy}
           onClick={() => document.getElementById("admin-upload-hidden")?.click()}
-          className="fixed bottom-6 right-6 h-12 w-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center disabled:opacity-50"
+          className={
+            canCreateFolder
+              ? "fixed bottom-6 right-6 h-12 w-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center disabled:opacity-50"
+              : "fixed bottom-6 right-6 h-12 w-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center disabled:opacity-50"
+          }
+          style={canCreateFolder ? { right: "5.5rem" } : undefined}
         >
           <FileUp className="h-5 w-5" />
         </button>

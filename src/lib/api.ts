@@ -31,7 +31,6 @@ export type StorageBucketKey = "site" | "clientes";
 export interface UserRecord {
   id: string;
   name: string;
-  code: string;
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -57,34 +56,27 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 export async function listUsers(): Promise<UserRecord[]> {
   const payload = await fetchJson<{ users?: Array<Partial<UserRecord>> }>(USERS_URL, { method: "GET" });
   return (payload.users ?? [])
-    .filter((u) => typeof u.id === "string" && typeof u.name === "string" && typeof u.code === "string")
-    .map((u) => ({ id: u.id as string, name: u.name as string, code: u.code as string }));
+    .filter((u) => typeof u.id === "string" && typeof u.name === "string")
+    .map((u) => ({ id: u.id as string, name: u.name as string }));
 }
 
-export async function getUserByCode(code: string): Promise<UserRecord> {
-  const normalized = String(code || "")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, "");
+export async function getUserById(id: string): Promise<UserRecord> {
+  const normalized = String(id || "").trim();
   if (!normalized) {
-    throw new Error("Informe o código do cliente");
-  }
-
-  if (!/^[A-HJ-NP-Z2-9]{12}$/.test(normalized)) {
-    throw new Error("Código inválido. Verifique se ele tem 12 caracteres.");
+    throw new Error("Informe o id do cliente");
   }
 
   const payload = await fetchJson<{ user?: Partial<UserRecord> }>(
-    `${USERS_URL}/by-code/${encodeURIComponent(normalized)}`,
+    `${USERS_URL}/${encodeURIComponent(normalized)}`,
     { method: "GET" }
   );
 
   const user = payload.user;
-  if (!user || typeof user.id !== "string" || typeof user.name !== "string" || typeof user.code !== "string") {
-    throw new Error("Resposta inválida ao validar código");
+  if (!user || typeof user.id !== "string" || typeof user.name !== "string") {
+    throw new Error("Resposta inválida ao validar id");
   }
 
-  return { id: user.id, name: user.name, code: user.code };
+  return { id: user.id, name: user.name };
 }
 
 export async function createUser(name: string): Promise<UserRecord> {
@@ -94,11 +86,11 @@ export async function createUser(name: string): Promise<UserRecord> {
     body: JSON.stringify({ name }),
   });
 
-  if (!payload.id || !payload.name || !payload.code) {
+  if (!payload.id || !payload.name) {
     throw new Error("Resposta inválida ao criar usuário");
   }
 
-  return { id: payload.id, name: payload.name, code: payload.code };
+  return { id: payload.id, name: payload.name };
 }
 
 export async function updateUser(id: string, patch: { name?: string }): Promise<void> {
@@ -115,9 +107,19 @@ export async function deleteUser(id: string): Promise<void> {
   });
 }
 
+export function getClientPhotosZipUrl(id: string): string {
+  const normalized = String(id || "").trim();
+  if (!normalized) {
+    throw new Error("Informe o id do cliente");
+  }
+
+  return `${USERS_URL}/${encodeURIComponent(normalized)}/photos.zip`;
+}
+
 interface ClientGeo {
   ip: string;
   location: string | null;
+  countryCode: string | null;
 }
 
 function parseManagerPayload(payload: unknown): ManagerListing {
@@ -260,8 +262,9 @@ async function lookupGeoFromIpApi(): Promise<ClientGeo | null> {
   const city = typeof data.city === "string" ? data.city : "";
   const region = typeof data.region === "string" ? data.region : "";
   const country = typeof data.country_name === "string" ? data.country_name : "";
+  const countryCode = typeof data.country_code === "string" ? data.country_code : null;
 
-  return { ip, location: formatLocation(city, region, country) };
+  return { ip, location: formatLocation(city, region, country), countryCode };
 }
 
 async function lookupGeoFromIpWho(): Promise<ClientGeo | null> {
@@ -277,8 +280,9 @@ async function lookupGeoFromIpWho(): Promise<ClientGeo | null> {
   const city = typeof data.city === "string" ? data.city : "";
   const region = typeof data.region === "string" ? data.region : "";
   const country = typeof data.country === "string" ? data.country : "";
+  const countryCode = typeof data.country_code === "string" ? data.country_code : null;
 
-  return { ip, location: formatLocation(city, region, country) };
+  return { ip, location: formatLocation(city, region, country), countryCode };
 }
 
 async function getClientGeo(): Promise<ClientGeo> {
@@ -296,7 +300,7 @@ async function getClientGeo(): Promise<ClientGeo> {
     // ignore
   }
 
-  return { ip: "unknown", location: null };
+  return { ip: "unknown", location: null, countryCode: null };
 }
 
 function parseStorageListPayload(payload: unknown): SiteData {
@@ -529,7 +533,10 @@ export async function deleteFile(filePath: string, bucket: StorageBucketKey = "s
 }
 
 export async function notifyAccess(path: string): Promise<void> {
-  const { ip, location } = await getClientGeo();
+  const { ip, location, countryCode } = await getClientGeo();
+  if ((countryCode || "").toUpperCase() !== "BR") {
+    return;
+  }
   const ua = navigator.userAgent ?? "unknown";
   const locationLine = location ? `\nlocal: ${location}` : "";
   const text = `📍 Acesso no site\npath: ${path}${locationLine}\nip: ${ip}\nua: ${ua}`;
