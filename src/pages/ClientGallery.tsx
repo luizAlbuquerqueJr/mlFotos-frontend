@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   getUserById,
   listManagerPath,
+  notifyAccess,
   type ManagerFileItem,
   type ManagerFolderItem,
   type UserRecord,
@@ -54,6 +55,7 @@ const ClientGallery = () => {
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const lastAutoValidatedIdRef = useRef<string>("");
+  const didNotifyEntryRef = useRef(false);
 
   const initialId = useMemo(() => {
     const fromUrl = searchParams.get("id");
@@ -120,6 +122,14 @@ const ClientGallery = () => {
   useEffect(() => {
     setCodeInput(initialId);
   }, [initialId]);
+
+  useEffect(() => {
+    if (didNotifyEntryRef.current) return;
+    didNotifyEntryRef.current = true;
+
+    notifyAccess(window.location.pathname)
+      .catch((err) => console.error("Error notifying access:", err));
+  }, []);
 
   const validateId = async (
     rawId: string,
