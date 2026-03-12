@@ -19,10 +19,12 @@ import {
   renameFile,
   renameFolder,
   updateUser,
+  getBucketSizes,
   type StorageBucketKey,
   type UserRecord,
   type ManagerFileItem,
   type ManagerFolderItem,
+  type BucketSizes,
   uploadImageToPath,
 } from "@/lib/api";
 
@@ -51,6 +53,7 @@ const Admin = () => {
   const [currentClientName, setCurrentClientName] = useState<string>("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadingCount, setUploadingCount] = useState(0);
+  const [bucketSizes, setBucketSizes] = useState<BucketSizes | null>(null);
 
   const [cropOpen, setCropOpen] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
@@ -138,12 +141,40 @@ const Admin = () => {
     };
   }, [currentClientId]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const sizes = await getBucketSizes();
+        if (cancelled) return;
+        setBucketSizes(sizes);
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Failed to load bucket sizes", error);
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const canCreateFolder =
     (bucket === "site" && (currentPath === "albuns" || currentPath.startsWith("albuns/"))) ||
     (bucket === "clientes" && (currentPath === "clientes" || currentPath.startsWith("clientes/")));
   const canUploadToPath =
     (bucket === "site" && (currentPath === "home" || currentPath.startsWith("albuns/"))) ||
     (bucket === "clientes" && currentPath.startsWith("clientes/"));
+
+  const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
+  };
 
   const breadcrumbs = useMemo(() => {
     if (!currentPath) return [] as string[];
@@ -187,7 +218,7 @@ const Admin = () => {
 
   const handleShareUserWhatsapp = (user: UserRecord) => {
     const url = `${window.location.origin}/clientes?id=${encodeURIComponent(user.id)}`;
-    const text = `Olá ${user.name}! 
+    const text = `Olá! 
 Aqui está o link para acessar suas fotos: ${url}.  
 Recomendamos dar uma olhada na seção “Boas práticas para arrasar nas redes sociais” para aproveitar ainda mais suas imagens.  
 E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotografia. Vamos adorar ver suas fotos por lá!`;
@@ -456,6 +487,20 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
             <p className="text-sm text-muted-foreground">
               Cliente: <span className="text-foreground">{currentClientName}</span>
             </p>
+          )}
+
+          {bucketSizes && (
+            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+              <div>
+                <span className="font-medium">Site:</span> {formatBytes(bucketSizes.site)}
+              </div>
+              <div>
+                <span className="font-medium">Clientes:</span> {formatBytes(bucketSizes.clientes)}
+              </div>
+              <div>
+                <span className="font-medium">Total:</span> {formatBytes(bucketSizes.total)}
+              </div>
+            </div>
           )}
 
           <div className="flex flex-wrap items-center gap-4">

@@ -26,11 +26,19 @@ const USERS_URL =
     ? "https://mlfotos-api-512158927105.us-central1.run.app/users"
     : "http://localhost:8090/users");
 
+const BUCKET_SIZE_URL = USERS_URL.replace("/users", "/bucket-size");
+
 export type StorageBucketKey = "site" | "clientes";
 
 export interface UserRecord {
   id: string;
   name: string;
+}
+
+export interface BucketSizes {
+  site: number;
+  clientes: number;
+  total: number;
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -553,4 +561,8 @@ export async function notifyAccess(path: string): Promise<void> {
   if (!response.ok) {
     throw new Error(`Failed to notify access: ${response.status}`);
   }
+}
+
+export async function getBucketSizes(): Promise<BucketSizes> {
+  return fetchJson<BucketSizes>(BUCKET_SIZE_URL);
 }
