@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight, FileUp, FolderPlus, Loader2, Pencil, Trash2, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import ImageCropDialog from "@/components/ImageCropDialog";
 import { useToast } from "@/hooks/use-toast";
 import { cropImageFile, type CropAreaPixels } from "@/lib/imageCrop";
@@ -48,6 +49,8 @@ const Admin = () => {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [currentClientName, setCurrentClientName] = useState<string>("");
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadingCount, setUploadingCount] = useState(0);
 
   const [cropOpen, setCropOpen] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
@@ -234,13 +237,53 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
     const title = isHome ? "Cortar imagem (Home 9:16)" : "Cortar imagem (Álbum 4:5)";
 
     setBusy(true);
+    setUploadProgress(0);
+    setUploadingCount(pickedFiles.length);
+
     try {
-      for (const file of pickedFiles) {
-        const prepared = bucket === "clientes" ? file : await requestCrop(file, { aspect, title });
-        await uploadImageToPath(currentPath, prepared, bucket);
+      const isClientUpload = bucket === "clientes";
+      let completed = 0;
+      let failures = 0;
+
+      if (isClientUpload) {
+        const uploadFile = async (file: File) => {
+          try {
+            await uploadImageToPath(currentPath, file, bucket);
+          } catch (error) {
+            failures += 1;
+            throw error;
+          } finally {
+            completed += 1;
+            const pct = Math.min(100, Math.round((completed / pickedFiles.length) * 100));
+            setUploadProgress(pct);
+          }
+        };
+
+        const concurrency = 3;
+        for (let i = 0; i < pickedFiles.length; i += concurrency) {
+          const batch = pickedFiles.slice(i, i + concurrency);
+          await Promise.allSettled(batch.map(uploadFile));
+        }
+      } else {
+        for (const file of pickedFiles) {
+          try {
+            const prepared = await requestCrop(file, { aspect, title });
+            await uploadImageToPath(currentPath, prepared, bucket);
+          } catch (error) {
+            failures += 1;
+          } finally {
+            completed += 1;
+            const pct = Math.min(100, Math.round((completed / pickedFiles.length) * 100));
+            setUploadProgress(pct);
+          }
+        }
       }
+
       await refresh();
-      toast({ title: "Upload concluído" });
+      toast({
+        title: "Upload concluído",
+        description: failures > 0 ? `${failures} arquivo(s) falharam.` : undefined,
+      });
     } catch (error) {
       toast({
         variant: "destructive",
@@ -249,6 +292,8 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
       });
     } finally {
       setBusy(false);
+      setUploadingCount(0);
+      setUploadProgress(0);
     }
   };
 
@@ -451,6 +496,18 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
               <Button variant="outline" disabled={busy} onClick={handleDeploy}>
                 {busy ? "Processando..." : "Deploy"}
               </Button>
+            </div>
+          )}
+
+          {uploadingCount > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">
+                  Enviando {uploadingCount} {uploadingCount === 1 ? "foto" : "fotos"}...
+                </span>
+                <span className="font-medium">{uploadProgress}%</span>
+              </div>
+              <Progress value={uploadProgress} className="h-2" />
             </div>
           )}
         </header>

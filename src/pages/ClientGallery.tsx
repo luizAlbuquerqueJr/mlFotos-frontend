@@ -297,26 +297,74 @@ const ClientGallery = () => {
         return;
       }
 
-      let failures = 0;
+      const supportsFileSystemAccess = "showDirectoryPicker" in window;
 
-      for (let i = 0; i < allFiles.length; i += 1) {
-        const file = allFiles[i];
+      if (supportsFileSystemAccess) {
         try {
-          await downloadFromUrl(file.url, file.name);
-        } catch {
-          failures += 1;
+          const dirHandle = await (window as unknown as { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker();
+          let failures = 0;
+
+          for (let i = 0; i < allFiles.length; i += 1) {
+            const file = allFiles[i];
+            try {
+              const res = await fetch(file.url, { method: "GET" });
+              if (!res.ok) throw new Error(`Falha ao baixar: ${res.status}`);
+              const blob = await res.blob();
+
+              const fileHandle = await dirHandle.getFileHandle(file.name, { create: true });
+              const writable = await fileHandle.createWritable();
+              await writable.write(blob);
+              await writable.close();
+            } catch {
+              failures += 1;
+            }
+
+            const pct = Math.min(100, Math.round(((i + 1) / total) * 100));
+            setDownloadAllProgress(pct);
+          }
+
+          setDownloadAllProgress(100);
+          toast({
+            title: "Fotos baixadas",
+            description: failures > 0 ? `${failures} arquivo(s) não puderam ser baixados.` : undefined,
+          });
+        } catch (error) {
+          if ((error as Error).name === "AbortError") {
+            toast({
+              title: "Download cancelado",
+              description: "Você cancelou a seleção da pasta.",
+            });
+          } else {
+            throw error;
+          }
+        }
+      } else {
+        toast({
+          title: "Atenção",
+          description: "Seu navegador vai pedir confirmação para cada foto. Recomendamos usar Chrome ou Edge para uma experiência melhor.",
+        });
+
+        let failures = 0;
+
+        for (let i = 0; i < allFiles.length; i += 1) {
+          const file = allFiles[i];
+          try {
+            await downloadFromUrl(file.url, file.name);
+          } catch {
+            failures += 1;
+          }
+
+          const pct = Math.min(100, Math.round(((i + 1) / total) * 100));
+          setDownloadAllProgress(pct);
+          await new Promise((resolve) => setTimeout(resolve, 150));
         }
 
-        const pct = Math.min(100, Math.round(((i + 1) / total) * 100));
-        setDownloadAllProgress(pct);
-        await new Promise((resolve) => setTimeout(resolve, 150));
+        setDownloadAllProgress(100);
+        toast({
+          title: "Fotos baixadas",
+          description: failures > 0 ? `${failures} arquivo(s) não puderam ser baixados.` : undefined,
+        });
       }
-
-      setDownloadAllProgress(100);
-      toast({
-        title: "Fotos baixadas",
-        description: failures > 0 ? `${failures} arquivo(s) não puderam ser baixados.` : undefined,
-      });
     } catch (error) {
       toast({
         variant: "destructive",
