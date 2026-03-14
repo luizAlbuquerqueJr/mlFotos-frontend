@@ -5,7 +5,11 @@ import logo from "@/assets/logo.jpg";
 const LOADING_TEXT = "Momentos únicos merecem ser vistos com a melhor qualidade.";
 const MIN_TYPEWRITER_DURATION_MS = 2000;
 
-const LoadingScreen = () => {
+interface LoadingScreenProps {
+  onComplete?: () => void;
+}
+
+const LoadingScreen = ({ onComplete }: LoadingScreenProps) => {
   const [visibleCount, setVisibleCount] = useState(0);
   const typingIntervalMs = useMemo(
     () => Math.max(18, Math.floor(MIN_TYPEWRITER_DURATION_MS / LOADING_TEXT.length)),
@@ -27,6 +31,12 @@ const LoadingScreen = () => {
       window.clearInterval(timer);
     };
   }, [typingIntervalMs]);
+
+  useEffect(() => {
+    if (visibleCount >= LOADING_TEXT.length && onComplete) {
+      onComplete();
+    }
+  }, [visibleCount, onComplete]);
 
   const shownText = LOADING_TEXT.slice(0, visibleCount);
 

@@ -32,12 +32,26 @@ function preloadImageFully(src: string): Promise<boolean> {
   });
 }
 
+const MIN_LOADING_DURATION_MS = 3000;
+
 const Index = () => {
   const [loading, setLoading] = useState(true);
   const [siteData, setSiteData] = useState<SiteData | null>(null);
   const [carouselPhotos, setCarouselPhotos] = useState<FetchedPhoto[]>([]);
   const [imagesReady, setImagesReady] = useState(false);
+  const [typewriterComplete, setTypewriterComplete] = useState(false);
+  const [minTimeElapsed, setMinTimeElapsed] = useState(false);
   const didRunEntryEffects = useRef(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setMinTimeElapsed(true);
+    }, MIN_LOADING_DURATION_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,17 +79,11 @@ const Index = () => {
             await Promise.all(preloadPromises);
             if (!cancelled) {
               setImagesReady(true);
-              setLoading(false);
             }
-          } else {
-            setLoading(false);
           }
         }
       } catch (err) {
         console.error("Error fetching site data:", err);
-        if (!cancelled) {
-          setLoading(false);
-        }
       }
     })();
 
@@ -84,6 +92,11 @@ const Index = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (imagesReady && typewriterComplete && minTimeElapsed) {
+      setLoading(false);
+    }
+  }, [imagesReady, typewriterComplete, minTimeElapsed]);
 
   useEffect(() => {
     if (didRunEntryEffects.current) return;
@@ -96,7 +109,7 @@ const Index = () => {
   return (
     <>
       <AnimatePresence>
-        {loading && <LoadingScreen />}
+        {loading && <LoadingScreen onComplete={() => setTypewriterComplete(true)} />}
       </AnimatePresence>
 
       {!loading && siteData && imagesReady && (
