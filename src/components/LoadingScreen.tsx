@@ -1,7 +1,35 @@
 import { motion } from "framer-motion";
+import { useEffect, useMemo, useState } from "react";
 import logo from "@/assets/logo.jpg";
 
-const LoadingScreen = ({ onFinish }: { onFinish: () => void }) => {
+const LOADING_TEXT = "Momentos únicos merecem ser vistos com a melhor qualidade.";
+const MIN_TYPEWRITER_DURATION_MS = 2000;
+
+const LoadingScreen = () => {
+  const [visibleCount, setVisibleCount] = useState(0);
+  const typingIntervalMs = useMemo(
+    () => Math.max(18, Math.floor(MIN_TYPEWRITER_DURATION_MS / LOADING_TEXT.length)),
+    []
+  );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setVisibleCount((prev) => {
+        if (prev >= LOADING_TEXT.length) {
+          window.clearInterval(timer);
+          return prev;
+        }
+        return prev + 1;
+      });
+    }, typingIntervalMs);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [typingIntervalMs]);
+
+  const shownText = LOADING_TEXT.slice(0, visibleCount);
+
   return (
     <motion.div
       exit={{ opacity: 0 }}
@@ -16,21 +44,16 @@ const LoadingScreen = ({ onFinish }: { onFinish: () => void }) => {
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.6 }}
       />
-      <div className="w-48 h-[1px] bg-border overflow-hidden">
-        <motion.div
-          className="h-full bg-foreground/60"
-          initial={{ width: "0%" }}
-          animate={{ width: "90%" }}
-          transition={{ duration: 4, ease: "easeOut" }}
-        />
-      </div>
       <motion.p
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ delay: 0.8, duration: 0.5 }}
-        className="text-xs text-muted-foreground/50 tracking-widest uppercase"
+        transition={{ delay: 0.2, duration: 0.4 }}
+        className="max-w-[320px] md:max-w-[560px] px-6 text-center text-sm md:text-base text-muted-foreground/70 leading-relaxed"
       >
-        Carregando...
+        {shownText}
+        <span className="inline-block w-[1ch] text-muted-foreground/40" aria-hidden>
+          {visibleCount >= LOADING_TEXT.length ? "" : "|"}
+        </span>
       </motion.p>
     </motion.div>
   );

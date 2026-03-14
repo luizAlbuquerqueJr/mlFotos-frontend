@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
 import PhotoViewer from "@/components/PhotoViewer";
-import type { FetchedAlbum } from "@/lib/api";
+import type { FetchedAlbum, FetchedPhoto } from "@/lib/api";
 
 interface HeroCarouselProps {
-  slides: string[];
+  photos: FetchedPhoto[];
 }
 
-const HeroCarousel = ({ slides }: HeroCarouselProps) => {
+const HeroCarousel = ({ photos }: HeroCarouselProps) => {
   const [current, setCurrent] = useState(0);
   const [isViewerOpen, setIsViewerOpen] = useState(false);
   const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
@@ -17,19 +17,25 @@ const HeroCarousel = ({ slides }: HeroCarouselProps) => {
     () => ({
       id: "home",
       title: "Home",
-      cover: slides[0] ?? "",
-      photos: slides.map((src, index) => ({ src, alt: `Slide ${index + 1}` })),
+      cover: photos[0]?.src ?? "",
+      photos: photos.map((photo, index) => ({
+        src: photo.src,
+        alt: photo.alt || `Slide ${index + 1}`,
+        originalSrc: photo.originalSrc,
+        previewSrc: photo.previewSrc,
+        thumbSrc: photo.thumbSrc,
+      })),
     }),
-    [slides]
+    [photos]
   );
 
   const next = useCallback(() => {
-    if (slides.length === 0) return;
-    setCurrent((p) => (p + 1) % slides.length);
-  }, [slides.length]);
+    if (photos.length === 0) return;
+    setCurrent((p) => (p + 1) % photos.length);
+  }, [photos.length]);
 
   useEffect(() => {
-    if (slides.length === 0) return;
+    if (photos.length === 0) return;
     if (isViewerOpen) return;
 
     let cancelled = false;
@@ -49,7 +55,7 @@ const HeroCarousel = ({ slides }: HeroCarouselProps) => {
       cancelled = true;
       if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [isViewerOpen, next, slides.length]);
+  }, [isViewerOpen, next, photos.length]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -61,7 +67,7 @@ const HeroCarousel = ({ slides }: HeroCarouselProps) => {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  if (slides.length === 0) {
+  if (photos.length === 0) {
     return (
       <section
         id="home"
@@ -77,9 +83,11 @@ const HeroCarousel = ({ slides }: HeroCarouselProps) => {
       className="relative w-full overflow-hidden"
       style={{ minHeight: "calc(var(--vh, 1vh) * 100)" }}
     >
-      {slides.map((src, index) => (
+      {photos.map((photo, index) => {
+        const src = photo.src?.trim() || "";
+        return (
         <motion.div
-          key={src}
+          key={photo.originalSrc || photo.src || `slide-${index}`}
           animate={{ opacity: index === current ? 1 : 0 }}
           transition={{ duration: 1.5, ease: "easeInOut" }}
           className={`absolute inset-0 ${index === current ? "z-10 pointer-events-auto" : "z-0 pointer-events-none"}`}
@@ -97,14 +105,15 @@ const HeroCarousel = ({ slides }: HeroCarouselProps) => {
 
           <img
             src={src}
-            alt={`Slide ${index + 1}`}
+            alt={photo.alt || `Slide ${index + 1}`}
             className="absolute inset-0 h-full w-full object-contain md:object-cover"
             loading={index === 0 ? "eager" : "eager"}
             decoding="async"
             draggable={false}
           />
         </motion.div>
-      ))}
+        );
+      })}
 
       <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-background/60 via-transparent to-background/80" />
 
@@ -126,7 +135,7 @@ const HeroCarousel = ({ slides }: HeroCarouselProps) => {
       </div>
 
       <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 flex gap-2">
-        {slides.map((_, i) => (
+        {photos.map((_, i) => (
           <button
             key={i}
             onClick={(e) => {

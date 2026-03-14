@@ -36,9 +36,15 @@ const AlbumsSection = ({ albums }: AlbumsSectionProps) => {
               className="group cursor-pointer relative overflow-hidden rounded-sm aspect-[3/4]"
             >
               <img
-                src={album.cover}
+                src={album.photos[0]?.previewSrc || album.photos[0]?.thumbSrc || album.cover}
                 alt={album.title}
                 loading="lazy"
+                onError={(e) => {
+                  const fallbackSrc = album.photos[0]?.originalSrc || album.cover;
+                  if (!fallbackSrc) return;
+                  if (e.currentTarget.src === fallbackSrc) return;
+                  e.currentTarget.src = fallbackSrc;
+                }}
                 className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
               />
               <div className="absolute inset-0 bg-background/40 group-hover:bg-background/20 transition-colors duration-500" />

@@ -224,6 +224,8 @@ export interface FetchedPhoto {
   src: string;
   alt: string;
   originalSrc?: string;
+  previewSrc?: string;
+  thumbSrc?: string;
 }
 
 export interface FetchedAlbum {
@@ -263,6 +265,42 @@ interface StorageManagerPayload {
 function formatLocation(city: string, region: string, country: string): string | null {
   const parts = [city, region, country].map((s) => s.trim()).filter(Boolean);
   return parts.length ? parts.join(", ") : null;
+}
+
+function buildImageVariantUrl(originalUrl: string, variant: "thumb" | "preview"): string | null {
+  if (!originalUrl) return null;
+
+  try {
+    const parsed = new URL(originalUrl);
+    const segments = parsed.pathname.split("/");
+    const fileName = decodeURIComponent(segments.pop() || "");
+    if (!fileName || !/\.[a-z0-9]+$/i.test(fileName)) return null;
+
+    const dotIndex = fileName.lastIndexOf(".");
+    if (dotIndex <= 0) return null;
+
+    const baseName = fileName.slice(0, dotIndex);
+    const variantName = `${baseName}__${variant}.webp`;
+    segments.push(encodeURIComponent(variantName));
+    parsed.pathname = segments.join("/");
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function toFetchedPhoto(photo: StorageListPhoto): FetchedPhoto {
+  const originalSrc = photo.src;
+  const previewSrc = buildImageVariantUrl(originalSrc, "preview") || originalSrc;
+  const thumbSrc = buildImageVariantUrl(originalSrc, "thumb") || previewSrc || originalSrc;
+
+  return {
+    src: previewSrc,
+    alt: photo.alt,
+    originalSrc,
+    previewSrc,
+    thumbSrc,
+  };
 }
 
 async function lookupGeoFromIpApi(): Promise<ClientGeo | null> {
@@ -332,16 +370,18 @@ function parseStorageListPayload(payload: unknown): SiteData {
   };
 
   return {
-    homePhotos: (raw.homePhotos ?? []).map((photo) => ({ src: photo.src, alt: photo.alt })),
+    homePhotos: (raw.homePhotos ?? []).map(toFetchedPhoto),
     albums: (raw.albums ?? []).map((album) => ({
       id: album.id,
       title: album.title,
-      cover: album.cover,
-      photos: (album.photos ?? []).map((photo) => ({ src: photo.src, alt: photo.alt })),
+      cover: buildImageVariantUrl(album.cover, "thumb") || album.cover,
+      photos: (album.photos ?? []).map(toFetchedPhoto),
     })),
     logoUrl: raw.logoUrl ?? null,
     sobreUrl: raw.sobreUrl ?? null,
-    aboutPhotoUrl: raw.aboutPhotoUrl ?? null,
+    aboutPhotoUrl: raw.aboutPhotoUrl
+      ? buildImageVariantUrl(raw.aboutPhotoUrl, "preview") || raw.aboutPhotoUrl
+      : null,
   };
 }
 

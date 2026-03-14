@@ -11,7 +11,7 @@ interface PhotoViewerProps {
   initialPhotoIndex?: number;
 }
 
-const MAX_ZOOM = 3;
+const MAX_ZOOM = 5;
 
 const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps) => {
   const safeInitialIndex =
@@ -169,7 +169,7 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
     if (zoomRef.current > 1) {
       resetZoom();
     } else {
-      setZoom(2);
+      setZoom(2.5);
       setPan({ x: 0, y: 0 });
     }
   }, [resetZoom]);
@@ -316,7 +316,7 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.3 }}
-      className="fixed inset-0 z-50 bg-black flex items-center justify-center"
+      className="fixed inset-0 z-50 bg-black flex items-start justify-center px-3 pt-20 pb-6 md:px-6 md:pt-24"
       onClick={onClose}
     >
       {/* Close button - larger touch target on mobile */}
@@ -334,7 +334,7 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
         </h3>
       </div>
 
-      <div className="z-10 flex max-w-[92vw] flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
+      <div className="z-10 flex w-full max-w-6xl flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
         <div className="flex overflow-hidden rounded-full border border-foreground/30 bg-black/40 backdrop-blur-sm">
           <button
             type="button"
