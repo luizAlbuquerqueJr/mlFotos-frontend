@@ -11,11 +11,31 @@ export default defineConfig(({ mode }) => ({
     hmr: {
       overlay: false,
     },
+    allowedHosts: [
+      ".ngrok-free.app",
+      ".ngrok.io",
+      "localhost",
+    ],
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+  },
+  build: {
+    target: "es2015",
+    minify: "esbuild",
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom"],
+          motion: ["framer-motion"],
+          ui: ["@radix-ui/react-dialog", "@radix-ui/react-toast"],
+        },
+      },
+    },
+    cssCodeSplit: true,
+    sourcemap: false,
   },
 }));

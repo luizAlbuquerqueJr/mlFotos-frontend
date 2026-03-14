@@ -5,13 +5,15 @@ import type { FetchedAlbum, FetchedPhoto } from "@/lib/api";
 
 interface HeroCarouselProps {
   photos: FetchedPhoto[];
+  enableAutoUpgrade?: boolean;
 }
 
-const HeroCarousel = ({ photos }: HeroCarouselProps) => {
+const HeroCarousel = ({ photos, enableAutoUpgrade = true }: HeroCarouselProps) => {
   const [current, setCurrent] = useState(0);
   const [isViewerOpen, setIsViewerOpen] = useState(false);
   const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
   const [showDetailCta, setShowDetailCta] = useState(true);
+  const [upgradedToOriginal, setUpgradedToOriginal] = useState<Set<number>>(new Set());
 
   const viewerAlbum: FetchedAlbum = useMemo(
     () => ({
@@ -67,6 +69,81 @@ const HeroCarousel = ({ photos }: HeroCarouselProps) => {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  useEffect(() => {
+    if (photos.length === 0) return;
+    if (!enableAutoUpgrade) return;
+
+    let cancelled = false;
+    const BATCH_SIZE = 2;
+
+    const processNextBatch = () => {
+      if (cancelled) return;
+
+      const nextIndicesToUpgrade: number[] = [];
+      
+      for (let i = 0; i < photos.length && nextIndicesToUpgrade.length < BATCH_SIZE; i++) {
+        if (!upgradedToOriginal.has(i)) {
+          const photo = photos[i];
+          const originalSrc = photo.originalSrc?.trim();
+          const currentSrc = photo.src?.trim();
+          if (originalSrc && originalSrc !== currentSrc) {
+            nextIndicesToUpgrade.push(i);
+          }
+        }
+      }
+
+      if (nextIndicesToUpgrade.length === 0) return;
+
+      const upgradePromises = nextIndicesToUpgrade.map((index) => {
+        const photo = photos[index];
+        const originalSrc = photo.originalSrc?.trim();
+        if (!originalSrc) return Promise.resolve();
+
+        return new Promise<void>((resolve) => {
+          const img = new Image();
+          const upgradeImage = async () => {
+            try {
+              if (typeof img.decode === "function") {
+                await img.decode();
+              }
+            } catch {
+              // ignore decode errors
+            }
+            if (cancelled) {
+              resolve();
+              return;
+            }
+            setUpgradedToOriginal((prev) => new Set([...prev, index]));
+            resolve();
+          };
+
+          img.onload = () => {
+            void upgradeImage();
+          };
+          img.onerror = () => {
+            if (!cancelled) {
+              setUpgradedToOriginal((prev) => new Set([...prev, index]));
+            }
+            resolve();
+          };
+          img.src = originalSrc;
+        });
+      });
+
+      Promise.all(upgradePromises).then(() => {
+        if (!cancelled) {
+          processNextBatch();
+        }
+      });
+    };
+
+    processNextBatch();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [photos, upgradedToOriginal, enableAutoUpgrade]);
+
   if (photos.length === 0) {
     return (
       <section
@@ -84,7 +161,8 @@ const HeroCarousel = ({ photos }: HeroCarouselProps) => {
       style={{ minHeight: "calc(var(--vh, 1vh) * 100)" }}
     >
       {photos.map((photo, index) => {
-        const src = photo.src?.trim() || "";
+        const isUpgraded = upgradedToOriginal.has(index);
+        const src = (isUpgraded && photo.originalSrc) ? photo.originalSrc.trim() : (photo.src?.trim() || "");
         return (
         <motion.div
           key={photo.originalSrc || photo.src || `slide-${index}`}
@@ -95,27 +173,18 @@ const HeroCarousel = ({ photos }: HeroCarouselProps) => {
         >
           <img
             src={src}
-            alt=""
-            aria-hidden
-            className="absolute inset-0 h-full w-full object-cover blur-2xl scale-110 opacity-60"
-            loading={index === 0 ? "eager" : "eager"}
-            decoding="async"
-            draggable={false}
-          />
-
-          <img
-            src={src}
             alt={photo.alt || `Slide ${index + 1}`}
             className="absolute inset-0 h-full w-full object-contain md:object-cover"
-            loading={index === 0 ? "eager" : "eager"}
+            loading={index === 0 || index === 1 ? "eager" : "lazy"}
             decoding="async"
             draggable={false}
+            fetchPriority={index === 0 ? "high" : "low"}
           />
         </motion.div>
         );
       })}
 
-      <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-background/60 via-transparent to-background/80" />
+      <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-background/60 via-transparent to-background/80 backdrop-blur-sm" />
 
       <div
         className={`absolute left-1/2 -translate-x-1/2 z-20 transition-all duration-300 ${
