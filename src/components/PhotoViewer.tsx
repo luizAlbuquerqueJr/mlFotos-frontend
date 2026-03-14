@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { FetchedAlbum } from "@/lib/api";
+import qualidadeAltaSfx from "../../assets/qualidade_alta.wav";
 
 interface PhotoViewerProps {
   album: FetchedAlbum;
@@ -23,6 +24,7 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isImageLoading, setIsImageLoading] = useState(true);
   const [showHint, setShowHint] = useState(true);
+  const [useOriginalQuality, setUseOriginalQuality] = useState(false);
   const isMobile = useIsMobile();
 
   const loadedSrcsRef = useRef<Set<string>>(new Set());
@@ -47,10 +49,19 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const baseImageSizeRef = useRef({ width: 0, height: 0 });
+  const qualityAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Keep refs in sync
   zoomRef.current = zoom;
   panRef.current = pan;
+
+  const currentPhoto = album.photos[photoIndex];
+  const hasOriginalQuality = Boolean(currentPhoto?.originalSrc?.trim());
+  const displayedSrc =
+    useOriginalQuality && hasOriginalQuality
+      ? currentPhoto.originalSrc.trim()
+      : currentPhoto?.src?.trim() || "";
+  const isHighQualityLoading = isImageLoading && useOriginalQuality && hasOriginalQuality;
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -70,6 +81,18 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
     return () => {
       document.body.style.overflow = "";
       clearTimeout(timer);
+    };
+  }, [album.photos]);
+
+  useEffect(() => {
+    qualityAudioRef.current = new Audio(qualidadeAltaSfx);
+    qualityAudioRef.current.preload = "auto";
+
+    return () => {
+      if (qualityAudioRef.current) {
+        qualityAudioRef.current.pause();
+        qualityAudioRef.current = null;
+      }
     };
   }, []);
 
@@ -114,14 +137,18 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
   }, [clampPan, updateBaseImageSize]);
 
   useEffect(() => {
-    const src = album.photos[photoIndex]?.src?.trim();
+    const src = displayedSrc;
     if (src && loadedSrcsRef.current.has(src)) {
       setIsImageLoading(false);
       return;
     }
 
     setIsImageLoading(true);
-  }, [photoIndex, album.id]);
+  }, [photoIndex, album.id, displayedSrc]);
+
+  useEffect(() => {
+    setUseOriginalQuality(false);
+  }, [photoIndex]);
 
   const resetZoom = useCallback(() => {
     setZoom(1);
@@ -146,6 +173,23 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
       setPan({ x: 0, y: 0 });
     }
   }, [resetZoom]);
+
+  const playHighQualitySound = useCallback(() => {
+    const audio = qualityAudioRef.current;
+    if (!audio) return;
+
+    try {
+      audio.currentTime = 0;
+      const promise = audio.play();
+      if (promise && typeof promise.catch === "function") {
+        promise.catch(() => {
+          // ignore autoplay/gesture restrictions
+        });
+      }
+    } catch {
+      // ignore audio runtime errors to avoid breaking UX
+    }
+  }, []);
 
   // --- Desktop handlers ---
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -290,81 +334,121 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
         </h3>
       </div>
 
-      {/* Navigation arrows - hidden on mobile */}
-      {!isMobile && (
-        <>
+      <div className="z-10 flex max-w-[92vw] flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
+        <div className="flex overflow-hidden rounded-full border border-foreground/30 bg-black/40 backdrop-blur-sm">
           <button
-            onClick={(e) => { e.stopPropagation(); goPrev(); }}
-            className="absolute left-4 md:left-8 top-1/2 -translate-y-1/2 text-foreground/40 hover:text-foreground transition-colors z-10"
+            type="button"
+            onClick={() => setUseOriginalQuality(false)}
+            className={`min-h-[40px] px-3 text-xs font-semibold tracking-wide transition-colors ${
+              !useOriginalQuality ? "bg-foreground text-background" : "text-foreground/80 hover:text-foreground"
+            }`}
           >
-            <ChevronLeft className="w-10 h-10" />
+            Qualidade média
           </button>
           <button
-            onClick={(e) => { e.stopPropagation(); goNext(); }}
-            className="absolute right-4 md:right-8 top-1/2 -translate-y-1/2 text-foreground/40 hover:text-foreground transition-colors z-10"
+            type="button"
+            onClick={() => {
+              playHighQualitySound();
+              setUseOriginalQuality(true);
+            }}
+            disabled={!hasOriginalQuality}
+            className={`min-h-[40px] px-3 text-xs font-semibold tracking-wide transition-colors ${
+              useOriginalQuality ? "bg-foreground text-background" : "text-foreground/80 hover:text-foreground"
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
           >
-            <ChevronRight className="w-10 h-10" />
+            Qualidade máxima
           </button>
-        </>
-      )}
+        </div>
+        <p className="px-4 text-center text-sm text-foreground/65">
+          Aproxime e dê zoom para apreciar cada detalhe e reviver a emoção do momento.❤️
+        </p>
 
-      {/* Image container */}
-      <div
-        ref={containerRef}
-        className="relative overflow-hidden max-w-[90vw] max-h-[85vh] flex items-center justify-center border-y border-foreground/20 py-2"
-        style={{ touchAction: "none" }}
-        onWheel={handleWheel}
-        onClick={(e) => e.stopPropagation()}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-      >
+        {/* Image container */}
+        <div
+          ref={containerRef}
+          className="relative overflow-hidden max-w-[90vw] max-h-[85vh] flex items-center justify-center border-y border-foreground/20 py-2"
+          style={{ touchAction: "none" }}
+          onWheel={handleWheel}
+          onClick={(e) => e.stopPropagation()}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
         {isImageLoading && (
           <div className="absolute inset-0 z-[2] flex items-center justify-center bg-black/35">
-            <div className="h-10 w-10 animate-spin rounded-full border-2 border-foreground/70 border-t-transparent" />
+            <div className="mx-4 max-w-xl rounded-xl bg-black/45 p-4 md:p-5 text-center">
+              <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-foreground/70 border-t-transparent" />
+              {isHighQualityLoading && (
+                <p className="mt-3 text-xs md:text-sm leading-relaxed text-foreground/90">
+                  Você verá sua foto na melhor qualidade disponível. Por se tratar de uma imagem de alta resolução, o carregamento pode levar alguns instantes. Para evitar consumo elevado de dados, recomendamos utilizar uma conexão Wi-Fi.
+                </p>
+              )}
+            </div>
           </div>
         )}
 
-        <motion.img
-          ref={imageRef}
-          src={album.photos[photoIndex].src}
-          alt={album.photos[photoIndex].alt}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.3 }}
-          style={{
-            transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
-            cursor: zoom > 1 ? "grab" : "zoom-in",
-            transition: isDragging.current || isTouchInteracting.current ? "none" : "transform 0.2s ease",
-            touchAction: "none",
-            opacity: isImageLoading ? 0 : 1,
-          }}
-          className="max-w-[90vw] max-h-[85vh] object-contain select-none"
-          draggable={false}
-          onLoad={() => {
-            const src = album.photos[photoIndex]?.src?.trim();
-            if (src) {
-              loadedSrcsRef.current.add(src);
-            }
-            setIsImageLoading(false);
-            updateBaseImageSize();
-            setPan((prev) => clampPan(prev, zoomRef.current));
-          }}
-          onError={() => {
-            const src = album.photos[photoIndex]?.src?.trim();
-            if (src) {
-              loadedSrcsRef.current.add(src);
-            }
-            setIsImageLoading(false);
-          }}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!isMobile && !isDragging.current) toggleZoom();
-          }}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-        />
+          <motion.img
+            ref={imageRef}
+            src={displayedSrc}
+            alt={album.photos[photoIndex].alt}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.3 }}
+            style={{
+              transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
+              cursor: zoom > 1 ? "grab" : "zoom-in",
+              transition: isDragging.current || isTouchInteracting.current ? "none" : "transform 0.2s ease",
+              touchAction: "none",
+              opacity: isImageLoading ? 0 : 1,
+              visibility: isImageLoading ? "hidden" : "visible",
+            }}
+            className="max-w-[90vw] max-h-[85vh] object-contain select-none"
+            draggable={false}
+            onLoad={() => {
+              const src = displayedSrc;
+              if (src) {
+                loadedSrcsRef.current.add(src);
+              }
+              setIsImageLoading(false);
+              updateBaseImageSize();
+              setPan((prev) => clampPan(prev, zoomRef.current));
+            }}
+            onError={() => {
+              const src = displayedSrc;
+              if (src) {
+                loadedSrcsRef.current.add(src);
+              }
+              setIsImageLoading(false);
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!isMobile && !isDragging.current) toggleZoom();
+            }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+          />
+        </div>
+
+        <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={goPrev}
+            className="min-h-[44px] min-w-[44px] text-foreground/65 hover:text-foreground transition-colors flex items-center justify-center"
+          >
+            <ChevronLeft className="w-7 h-7" />
+          </button>
+          <div className="text-foreground/50 text-sm tracking-widest min-w-[70px] text-center">
+            {photoIndex + 1} / {album.photos.length}
+          </div>
+          <button
+            type="button"
+            onClick={goNext}
+            className="min-h-[44px] min-w-[44px] text-foreground/65 hover:text-foreground transition-colors flex items-center justify-center"
+          >
+            <ChevronRight className="w-7 h-7" />
+          </button>
+        </div>
       </div>
 
       {/* Zoom button */}
@@ -374,11 +458,6 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
       >
         {zoom > 1 ? <ZoomOut className="w-5 h-5" /> : <ZoomIn className="w-5 h-5" />}
       </button>
-
-      {/* Photo counter */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-foreground/40 text-sm tracking-widest">
-        {photoIndex + 1} / {album.photos.length}
-      </div>
 
       {/* Mobile hint */}
       {isMobile && showHint && (

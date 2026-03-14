@@ -147,6 +147,9 @@ function parseManagerPayload(payload: unknown): ManagerListing {
       name: file.name,
       path: file.path,
       url: file.url,
+      originalUrl: typeof file.originalUrl === "string" ? file.originalUrl : undefined,
+      previewUrl: typeof file.previewUrl === "string" ? file.previewUrl : undefined,
+      thumbUrl: typeof file.thumbUrl === "string" ? file.thumbUrl : undefined,
     })),
   };
 }
@@ -206,6 +209,9 @@ export interface ManagerFileItem {
   name: string;
   path: string;
   url: string;
+  originalUrl?: string;
+  previewUrl?: string;
+  thumbUrl?: string;
 }
 
 export interface ManagerListing {
@@ -217,6 +223,7 @@ export interface ManagerListing {
 export interface FetchedPhoto {
   src: string;
   alt: string;
+  originalSrc?: string;
 }
 
 export interface FetchedAlbum {

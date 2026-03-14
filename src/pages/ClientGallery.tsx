@@ -20,8 +20,12 @@ function buildAlbumFromFiles(user: UserRecord, files: ManagerFileItem[]) {
   return {
     id: user.id,
     title: `Fotos de ${user.name}`,
-    cover: files[0]?.url ?? "",
-    photos: files.map((f) => ({ src: f.url, alt: f.name })),
+    cover: files[0]?.thumbUrl ?? files[0]?.previewUrl ?? files[0]?.url ?? "",
+    photos: files.map((f) => ({
+      src: f.previewUrl ?? f.url,
+      originalSrc: f.originalUrl ?? f.url,
+      alt: f.name,
+    })),
   };
 }
 
@@ -72,6 +76,9 @@ const ClientGallery = () => {
   const [viewerIndex, setViewerIndex] = useState(0);
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [downloadAllProgress, setDownloadAllProgress] = useState(0);
+  const [downloadBatchTotal, setDownloadBatchTotal] = useState(0);
+  const [downloadBatchCompleted, setDownloadBatchCompleted] = useState(0);
+  const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]);
   const [mustReadBestPractices, setMustReadBestPractices] = useState(false);
   const [bestPracticesProgress, setBestPracticesProgress] = useState(0);
   const [bestPracticesProgressDone, setBestPracticesProgressDone] = useState(false);
@@ -238,6 +245,16 @@ const ClientGallery = () => {
     return buildAlbumFromFiles(user, files);
   }, [files, user]);
 
+  const selectedPathsSet = useMemo(() => new Set(selectedFilePaths), [selectedFilePaths]);
+  const selectedVisibleCount = useMemo(
+    () => files.reduce((count, file) => count + (selectedPathsSet.has(file.path) ? 1 : 0), 0),
+    [files, selectedPathsSet]
+  );
+
+  useEffect(() => {
+    setSelectedFilePaths((prev) => prev.filter((path) => files.some((file) => file.path === path)));
+  }, [files]);
+
   const handleOpenFolder = async (folder: ManagerFolderItem) => {
     if (!user) return;
     if (!folder?.path) return;
@@ -277,26 +294,49 @@ const ClientGallery = () => {
   };
 
   const handleDownloadOne = async (file: ManagerFileItem) => {
-    await downloadFromUrl(file.url, file.name);
+    await downloadFromUrl(file.originalUrl ?? file.url, file.name);
   };
 
-  const handleDownloadAll = async () => {
-    if (!user) return;
+  const toggleFileSelection = (filePath: string) => {
+    setSelectedFilePaths((prev) =>
+      prev.includes(filePath) ? prev.filter((path) => path !== filePath) : [...prev, filePath]
+    );
+  };
+
+  const selectAllVisibleFiles = () => {
+    setSelectedFilePaths(files.map((file) => file.path));
+  };
+
+  const clearSelection = () => {
+    setSelectedFilePaths([]);
+  };
+
+  const getDownloadName = (file: ManagerFileItem) => {
+    const normalizedPath = String(file.path || "").trim();
+    if (rootClientFolderPath && normalizedPath.startsWith(rootClientFolderPath + "/")) {
+      const relativePath = normalizedPath.slice(rootClientFolderPath.length + 1);
+      return relativePath.replace(/\//g, "_");
+    }
+    return file.name;
+  };
+
+  const downloadBatch = async (items: ManagerFileItem[]) => {
+    const total = items.length;
+    if (total === 0) {
+      toast({
+        variant: "destructive",
+        title: "Nada para baixar",
+        description: "Nenhuma foto disponível no momento.",
+      });
+      return;
+    }
+
     setDownloadingAll(true);
     setDownloadAllProgress(0);
-    try {
-      const rootPath = `clientes/${user.id}`;
-      const allFiles = await listAllClientFilesRecursive(rootPath);
-      const total = allFiles.length;
-      if (total === 0) {
-        toast({
-          variant: "destructive",
-          title: "Nada para baixar",
-          description: "Nenhuma foto disponível no momento.",
-        });
-        return;
-      }
+    setDownloadBatchTotal(total);
+    setDownloadBatchCompleted(0);
 
+    try {
       const supportsFileSystemAccess = "showDirectoryPicker" in window;
 
       if (supportsFileSystemAccess) {
@@ -304,14 +344,14 @@ const ClientGallery = () => {
           const dirHandle = await (window as unknown as { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker();
           let failures = 0;
 
-          for (let i = 0; i < allFiles.length; i += 1) {
-            const file = allFiles[i];
+          for (let i = 0; i < items.length; i += 1) {
+            const file = items[i];
             try {
-              const res = await fetch(file.url, { method: "GET" });
+              const res = await fetch(file.originalUrl ?? file.url, { method: "GET", cache: "force-cache" });
               if (!res.ok) throw new Error(`Falha ao baixar: ${res.status}`);
               const blob = await res.blob();
 
-              const fileHandle = await dirHandle.getFileHandle(file.name, { create: true });
+              const fileHandle = await dirHandle.getFileHandle(getDownloadName(file), { create: true });
               const writable = await fileHandle.createWritable();
               await writable.write(blob);
               await writable.close();
@@ -319,11 +359,12 @@ const ClientGallery = () => {
               failures += 1;
             }
 
-            const pct = Math.min(100, Math.round(((i + 1) / total) * 100));
+            const completed = i + 1;
+            const pct = Math.min(100, Math.round((completed / total) * 100));
+            setDownloadBatchCompleted(completed);
             setDownloadAllProgress(pct);
           }
 
-          setDownloadAllProgress(100);
           toast({
             title: "Fotos baixadas",
             description: failures > 0 ? `${failures} arquivo(s) não puderam ser baixados.` : undefined,
@@ -345,21 +386,21 @@ const ClientGallery = () => {
         });
 
         let failures = 0;
-
-        for (let i = 0; i < allFiles.length; i += 1) {
-          const file = allFiles[i];
+        for (let i = 0; i < items.length; i += 1) {
+          const file = items[i];
           try {
-            await downloadFromUrl(file.url, file.name);
+            await downloadFromUrl(file.originalUrl ?? file.url, getDownloadName(file));
           } catch {
             failures += 1;
           }
 
-          const pct = Math.min(100, Math.round(((i + 1) / total) * 100));
+          const completed = i + 1;
+          const pct = Math.min(100, Math.round((completed / total) * 100));
+          setDownloadBatchCompleted(completed);
           setDownloadAllProgress(pct);
           await new Promise((resolve) => setTimeout(resolve, 150));
         }
 
-        setDownloadAllProgress(100);
         toast({
           title: "Fotos baixadas",
           description: failures > 0 ? `${failures} arquivo(s) não puderam ser baixados.` : undefined,
@@ -374,6 +415,27 @@ const ClientGallery = () => {
     } finally {
       setDownloadingAll(false);
     }
+  };
+
+  const handleDownloadAll = async () => {
+    if (!user) return;
+    try {
+      const rootPath = `clientes/${user.id}`;
+      const allFiles = await listAllClientFilesRecursive(rootPath);
+      await downloadBatch(allFiles);
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Erro ao baixar",
+        description: error instanceof Error ? error.message : "Falha ao baixar as fotos.",
+      });
+    }
+  };
+
+  const handleDownloadSelected = async () => {
+    if (!user) return;
+    const selectedFiles = files.filter((file) => selectedPathsSet.has(file.path));
+    await downloadBatch(selectedFiles);
   };
 
   return (
@@ -546,12 +608,24 @@ const ClientGallery = () => {
                 <Button className="w-full" variant="outline" size="sm" onClick={() => void handleDownloadAll()} disabled={downloadingAll}>
                   {downloadingAll ? "Baixando..." : "Baixar todas as imagens"}
                 </Button>
+
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleDownloadSelected()}
+                  disabled={downloadingAll || selectedVisibleCount === 0}
+                >
+                  {downloadingAll ? "Baixando..." : `Baixar selecionadas (${selectedVisibleCount})`}
+                </Button>
               </div>
 
               {downloadingAll && (
                 <div className="space-y-2">
                   <Progress value={downloadAllProgress} />
-                  <p className="text-sm text-muted-foreground">{downloadAllProgress}% concluído</p>
+                  <p className="text-sm text-muted-foreground">
+                    {downloadAllProgress}% concluído ({downloadBatchCompleted}/{downloadBatchTotal})
+                  </p>
                 </div>
               )}
             </div>
@@ -587,8 +661,13 @@ const ClientGallery = () => {
           )}
 
           {!mustReadBestPractices && user && files.length > 0 && (
-            <div className="flex justify-end">
-              <span />
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" size="sm" variant="outline" onClick={selectAllVisibleFiles} disabled={downloadingAll}>
+                Selecionar todas
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={clearSelection} disabled={downloadingAll || selectedVisibleCount === 0}>
+                Limpar seleção
+              </Button>
             </div>
           )}
 
@@ -597,8 +676,27 @@ const ClientGallery = () => {
               {files.map((file, index) => (
                 <div
                   key={file.path}
-                  className="group relative overflow-hidden rounded border border-border/40 bg-muted/10"
+                  className={`group relative overflow-hidden rounded border bg-muted/10 ${
+                    selectedPathsSet.has(file.path) ? "border-primary ring-1 ring-primary/40" : "border-border/40"
+                  }`}
                 >
+                  <button
+                    type="button"
+                    className={`absolute left-2 top-2 z-10 rounded-md px-2 py-1 text-xs font-semibold backdrop-blur-sm ${
+                      selectedPathsSet.has(file.path)
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-black/60 text-white hover:bg-black/70"
+                    }`}
+                    aria-label={selectedPathsSet.has(file.path) ? "Desmarcar foto" : "Selecionar foto"}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      toggleFileSelection(file.path);
+                    }}
+                  >
+                    {selectedPathsSet.has(file.path) ? "Selecionada" : "Selecionar"}
+                  </button>
+
                   <button
                     type="button"
                     className="absolute right-2 top-2 z-10 rounded-md bg-black/60 p-2 text-white backdrop-blur-sm hover:bg-black/70"
@@ -621,9 +719,10 @@ const ClientGallery = () => {
                     }}
                   >
                   <img
-                    src={file.url}
+                    src={file.thumbUrl ?? file.previewUrl ?? file.url}
                     alt={file.name}
                     loading="lazy"
+                    decoding="async"
                     className="aspect-square w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
                   />
                   </button>
