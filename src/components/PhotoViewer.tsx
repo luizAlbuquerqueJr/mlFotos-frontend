@@ -23,7 +23,6 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isImageLoading, setIsImageLoading] = useState(true);
-  const [showHint, setShowHint] = useState(true);
   const [useOriginalQuality, setUseOriginalQuality] = useState(false);
   const isMobile = useIsMobile();
 
@@ -64,8 +63,18 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
   const isHighQualityLoading = isImageLoading && useOriginalQuality && hasOriginalQuality;
 
   useEffect(() => {
+    const scrollY = window.scrollY;
+    const prev = {
+      overflow: document.body.style.overflow,
+      position: document.body.style.position,
+      top: document.body.style.top,
+      width: document.body.style.width,
+    };
+
     document.body.style.overflow = "hidden";
-    const timer = setTimeout(() => setShowHint(false), 2500);
+    document.body.style.position = "fixed";
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = "100%";
 
     // Preload album photos once on open to maximize cache hits when navigating.
     // We resolve on error too to avoid blocking.
@@ -79,8 +88,14 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
     }
 
     return () => {
-      document.body.style.overflow = "";
-      clearTimeout(timer);
+      document.body.style.overflow = prev.overflow;
+      document.body.style.position = prev.position;
+      document.body.style.top = prev.top;
+      document.body.style.width = prev.width;
+
+      const top = document.body.style.top;
+      const restored = top ? Number(top.replace("-", "").replace("px", "")) : scrollY;
+      window.scrollTo(0, restored || 0);
     };
   }, [album.photos]);
 
@@ -316,57 +331,53 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.3 }}
-      className="fixed inset-0 z-50 bg-black flex items-start justify-center px-3 pt-20 pb-6 md:px-6 md:pt-24"
+      className="fixed inset-0 z-50 bg-black flex items-stretch justify-center p-0"
       onClick={onClose}
     >
-      {/* Close button - larger touch target on mobile */}
-      <button
-        onClick={onClose}
-        className="absolute top-4 right-4 text-foreground/60 hover:text-foreground transition-colors z-10 min-w-[44px] min-h-[44px] flex items-center justify-center"
-      >
-        <X className="w-7 h-7" />
-      </button>
+      <div className="z-10 flex h-full w-full min-h-0 flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="relative w-full px-2 pt-3 pb-1">
+          <div className="flex w-full items-center justify-center gap-2">
+            <span className="whitespace-nowrap text-[11px] font-semibold tracking-widest text-foreground/60">Qualidade</span>
+            <div className="flex overflow-hidden rounded-full border border-foreground/30 bg-black/40 backdrop-blur-sm">
+              <button
+                type="button"
+                onClick={() => setUseOriginalQuality(false)}
+                className={`min-h-[26px] px-2 text-[12px] sm:text-[14px] font-semibold tracking-wide transition-colors ${
+                  !useOriginalQuality ? "bg-foreground text-background" : "text-foreground/80 hover:text-foreground"
+                }`}
+              >
+                Média
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  playHighQualitySound();
+                  setUseOriginalQuality(true);
+                }}
+                disabled={!hasOriginalQuality}
+                className={`min-h-[26px] px-2 text-[12px] sm:text-[14px] font-semibold tracking-wide transition-colors ${
+                  useOriginalQuality ? "bg-foreground text-background" : "text-foreground/80 hover:text-foreground"
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                Máxima 💎
+              </button>
+            </div>
+          </div>
 
-      {/* Album title */}
-      <div className="absolute top-4 left-4 z-10">
-        <h3 className="text-lg text-foreground/80" style={{ fontFamily: "var(--font-serif)" }}>
-          {album.title}
-        </h3>
-      </div>
-
-      <div className="z-10 flex w-full max-w-6xl flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
-        <div className="flex overflow-hidden rounded-full border border-foreground/30 bg-black/40 backdrop-blur-sm">
           <button
+            onClick={onClose}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-foreground/60 hover:text-foreground transition-colors min-w-[32px] min-h-[32px] flex items-center justify-center"
             type="button"
-            onClick={() => setUseOriginalQuality(false)}
-            className={`min-h-[40px] px-3 text-xs font-semibold tracking-wide transition-colors ${
-              !useOriginalQuality ? "bg-foreground text-background" : "text-foreground/80 hover:text-foreground"
-            }`}
+            aria-label="Fechar"
           >
-            Qualidade média
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              playHighQualitySound();
-              setUseOriginalQuality(true);
-            }}
-            disabled={!hasOriginalQuality}
-            className={`min-h-[40px] px-3 text-xs font-semibold tracking-wide transition-colors ${
-              useOriginalQuality ? "bg-foreground text-background" : "text-foreground/80 hover:text-foreground"
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
-          >
-            Qualidade máxima
+            <X className="w-5 h-5" />
           </button>
         </div>
-        <p className="px-4 text-center text-sm text-foreground/65">
-          Aproxime e dê zoom para apreciar cada detalhe e reviver a emoção do momento.❤️
-        </p>
 
         {/* Image container */}
         <div
           ref={containerRef}
-          className="relative overflow-hidden max-w-[90vw] max-h-[85vh] flex items-center justify-center border-y border-foreground/20 py-2"
+          className="relative min-h-0 flex-1 w-full overflow-hidden flex items-center justify-center border-y border-foreground/20"
           style={{ touchAction: "none" }}
           onWheel={handleWheel}
           onClick={(e) => e.stopPropagation()}
@@ -402,7 +413,7 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
               opacity: isImageLoading ? 0 : 1,
               visibility: isImageLoading ? "hidden" : "visible",
             }}
-            className="max-w-[90vw] max-h-[85vh] object-contain select-none"
+            className="h-full w-full object-contain select-none"
             draggable={false}
             onLoad={() => {
               const src = displayedSrc;
@@ -430,23 +441,23 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
           />
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="m-1 flex items-center justify-center gap-1">
           <button
             type="button"
             onClick={goPrev}
-            className="min-h-[44px] min-w-[44px] text-foreground/65 hover:text-foreground transition-colors flex items-center justify-center"
+            className="min-h-[32px] min-w-[32px] text-foreground/65 hover:text-foreground transition-colors flex items-center justify-center"
           >
-            <ChevronLeft className="w-7 h-7" />
+            <ChevronLeft className="w-5 h-5" />
           </button>
-          <div className="text-foreground/50 text-sm tracking-widest min-w-[70px] text-center">
+          <div className="text-foreground/50 text-[11px] tracking-widest min-w-[58px] text-center">
             {photoIndex + 1} / {album.photos.length}
           </div>
           <button
             type="button"
             onClick={goNext}
-            className="min-h-[44px] min-w-[44px] text-foreground/65 hover:text-foreground transition-colors flex items-center justify-center"
+            className="min-h-[32px] min-w-[32px] text-foreground/65 hover:text-foreground transition-colors flex items-center justify-center"
           >
-            <ChevronRight className="w-7 h-7" />
+            <ChevronRight className="w-5 h-5" />
           </button>
         </div>
       </div>
@@ -459,17 +470,7 @@ const PhotoViewer = ({ album, onClose, initialPhotoIndex = 0 }: PhotoViewerProps
         {zoom > 1 ? <ZoomOut className="w-5 h-5" /> : <ZoomIn className="w-5 h-5" />}
       </button>
 
-      {/* Mobile hint */}
-      {isMobile && showHint && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0 }}
-          className="absolute bottom-16 left-1/2 -translate-x-1/2 text-foreground/30 text-xs tracking-wider text-center"
-        >
-          Pinça para zoom · Deslize para navegar
-        </motion.div>
-      )}
+      {/* Mobile hint removed */}
     </motion.div>
   );
 };

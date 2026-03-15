@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
-import logo from "@/assets/logo.jpg";
+import logo from "@/assets/logo.png";
 
 const LOADING_TEXT = "Momentos únicos merecem ser vistos com a melhor qualidade.";
 const MIN_TYPEWRITER_DURATION_MS = 2000;
@@ -49,7 +49,7 @@ const LoadingScreen = ({ onComplete }: LoadingScreenProps) => {
       <motion.img
         src={logo}
         alt="Mônica Lima"
-        className="h-16 w-auto"
+        className="w-[80vw] max-w-[420px] h-auto"
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.6 }}
