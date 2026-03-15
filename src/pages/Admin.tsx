@@ -216,6 +216,28 @@ const Admin = () => {
     }
   };
 
+  const getFileBaseName = (name: string): string => {
+    if (name.endsWith("__thumb.webp")) {
+      return name.replace(/__thumb\.webp$/i, "");
+    }
+    if (name.endsWith("__preview.webp")) {
+      return name.replace(/__preview\.webp$/i, "");
+    }
+
+    const dotIndex = name.lastIndexOf(".");
+    if (dotIndex > 0) {
+      return name.slice(0, dotIndex);
+    }
+
+    return name;
+  };
+
+  const getFileDir = (path: string): string => {
+    const normalized = String(path || "").replace(/\\/g, "/");
+    const idx = normalized.lastIndexOf("/");
+    return idx >= 0 ? normalized.slice(0, idx) : "";
+  };
+
   const handleShareUserWhatsapp = (user: UserRecord) => {
     const url = `${window.location.origin}/clientes?id=${encodeURIComponent(user.id)}`;
     const text = `Olá! 
@@ -460,7 +482,33 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
 
     setBusy(true);
     try {
-      await deleteFile(file.path, bucket);
+      const base = getFileBaseName(file.name);
+      const dir = getFileDir(file.path);
+      const prefix = dir ? `${dir}/` : "";
+
+      const targets = new Map<string, ManagerFileItem>();
+
+      const thumbName = `${base}__thumb.webp`;
+      const previewName = `${base}__preview.webp`;
+
+      for (const candidate of files) {
+        if (!candidate.path.startsWith(prefix)) continue;
+        if (candidate.name === thumbName) {
+          targets.set(candidate.path, candidate);
+        }
+        if (candidate.name === previewName) {
+          targets.set(candidate.path, candidate);
+        }
+        if (candidate.name.startsWith(`${base}.`) && !candidate.name.includes("__")) {
+          targets.set(candidate.path, candidate);
+        }
+      }
+
+      if (targets.size === 0) {
+        targets.set(file.path, file);
+      }
+
+      await Promise.all(Array.from(targets.keys()).map((path) => deleteFile(path, bucket)));
       await refresh();
       toast({ title: "Arquivo apagado" });
     } catch (error) {
@@ -716,42 +764,45 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
 
         <section className="rounded-lg border border-border/60 bg-card p-5 space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">Arquivos</h2>
-          <ul className="space-y-2">
-            {files.map((file) => (
-              <li
-                key={file.path}
-                className="flex flex-wrap items-center justify-between gap-2 rounded border border-border/40 px-3 py-2"
-              >
-                <a href={file.url} target="_blank" rel="noreferrer" className="text-sm hover:underline">
-                  {file.name}
-                </a>
-                <div className="flex items-center gap-2">
-                  <button
-                    className="rounded-md border border-border/40 p-2 hover:bg-accent disabled:opacity-50"
-                    onClick={() => handleRenameFile(file)}
-                    aria-label="Renomear arquivo"
-                    type="button"
-                    disabled={busy}
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </button>
-                  <button
-                    className="rounded-md border border-border/40 p-2 hover:bg-accent disabled:opacity-50"
-                    onClick={() => handleDeleteFile(file)}
-                    aria-label="Apagar arquivo"
-                    type="button"
-                    disabled={busy}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              </li>
-            ))}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+            {files
+              .filter((file) => file.name.toLowerCase().endsWith("__thumb.webp"))
+              .map((file) => {
+                const base = getFileBaseName(file.name);
+                const dir = getFileDir(file.path);
+                const prefix = dir ? `${dir}/` : "";
+                const original = files.find(
+                  (candidate) =>
+                    candidate.path.startsWith(prefix) &&
+                    candidate.name.startsWith(`${base}.`) &&
+                    !candidate.name.includes("__")
+                );
 
-            {files.length === 0 && !loading && (
-              <li className="text-sm text-muted-foreground">Nenhum arquivo neste diretório.</li>
-            )}
-          </ul>
+                return (
+                  <div key={file.path} className="relative overflow-hidden rounded border border-border/40 bg-background">
+                    <a href={(original?.url || file.url) ?? file.url} target="_blank" rel="noreferrer">
+                      <img src={file.url} alt={file.name} className="aspect-square w-full object-cover" loading="lazy" />
+                    </a>
+
+                    <div className="absolute right-2 top-2 flex items-center gap-2">
+                      <button
+                        className="rounded-md border border-border/40 bg-background/80 p-2 backdrop-blur hover:bg-accent disabled:opacity-50"
+                        onClick={() => handleDeleteFile(file)}
+                        aria-label="Apagar arquivo"
+                        type="button"
+                        disabled={busy}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+
+          {files.filter((file) => file.name.toLowerCase().endsWith("__thumb.webp")).length === 0 && !loading && (
+            <p className="text-sm text-muted-foreground">Nenhuma imagem neste diretório.</p>
+          )}
         </section>
       </div>
 

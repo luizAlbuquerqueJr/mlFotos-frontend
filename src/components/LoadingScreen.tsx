@@ -44,7 +44,11 @@ const LoadingScreen = ({ onComplete }: LoadingScreenProps) => {
     <motion.div
       exit={{ opacity: 0 }}
       transition={{ duration: 0.6, ease: "easeInOut" }}
-      className="fixed inset-0 z-[100] bg-background flex flex-col items-center justify-center gap-8"
+      className="fixed inset-0 z-[100] bg-background flex flex-col items-center justify-center gap-6 sm:gap-8 overflow-y-auto"
+      style={{
+        paddingTop: "max(2rem, env(safe-area-inset-top))",
+        paddingBottom: "max(2rem, env(safe-area-inset-bottom))",
+      }}
     >
       <motion.img
         src={logo}
@@ -58,7 +62,7 @@ const LoadingScreen = ({ onComplete }: LoadingScreenProps) => {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.2, duration: 0.4 }}
-        className="max-w-[320px] md:max-w-[560px] px-6 text-center text-sm md:text-base text-muted-foreground/70 leading-relaxed"
+        className="max-w-[320px] md:max-w-[560px] px-6 pb-1 text-center text-xs sm:text-sm md:text-base text-muted-foreground/70 leading-relaxed break-words"
       >
         {shownText}
         <span className="inline-block w-[1ch] text-muted-foreground/40" aria-hidden>
