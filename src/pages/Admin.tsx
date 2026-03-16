@@ -766,22 +766,15 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
           <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">Arquivos</h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
             {files
-              .filter((file) => file.name.toLowerCase().endsWith("__thumb.webp"))
+              .filter((file) => !file.name.includes("__"))
               .map((file) => {
-                const base = getFileBaseName(file.name);
-                const dir = getFileDir(file.path);
-                const prefix = dir ? `${dir}/` : "";
-                const original = files.find(
-                  (candidate) =>
-                    candidate.path.startsWith(prefix) &&
-                    candidate.name.startsWith(`${base}.`) &&
-                    !candidate.name.includes("__")
-                );
+                const displayUrl = file.thumbUrl || file.previewUrl || file.url;
+                const linkUrl = file.originalUrl || file.url;
 
                 return (
                   <div key={file.path} className="relative overflow-hidden rounded border border-border/40 bg-background">
-                    <a href={(original?.url || file.url) ?? file.url} target="_blank" rel="noreferrer">
-                      <img src={file.url} alt={file.name} className="aspect-square w-full object-cover" loading="lazy" />
+                    <a href={linkUrl} target="_blank" rel="noreferrer">
+                      <img src={displayUrl} alt={file.name} className="aspect-square w-full object-cover" loading="lazy" />
                     </a>
 
                     <div className="absolute right-2 top-2 flex items-center gap-2">
@@ -800,7 +793,7 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
               })}
           </div>
 
-          {files.filter((file) => file.name.toLowerCase().endsWith("__thumb.webp")).length === 0 && !loading && (
+          {files.filter((file) => !file.name.includes("__")).length === 0 && !loading && (
             <p className="text-sm text-muted-foreground">Nenhuma imagem neste diretório.</p>
           )}
         </section>

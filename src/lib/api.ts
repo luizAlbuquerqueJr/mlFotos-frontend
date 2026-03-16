@@ -356,6 +356,15 @@ async function getClientGeo(): Promise<ClientGeo> {
   return { ip: "unknown", location: null, countryCode: null };
 }
 
+function shuffleArray<T>(array: T[]): T[] {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
 function parseStorageListPayload(payload: unknown): SiteData {
   if (!payload || typeof payload !== "object") {
     throw new Error("Resposta inválida da função de listagem");
@@ -369,8 +378,11 @@ function parseStorageListPayload(payload: unknown): SiteData {
     aboutPhotoUrl?: string | null;
   };
 
+  const homePhotos = (raw.homePhotos ?? []).map(toFetchedPhoto);
+  const shuffledHomePhotos = shuffleArray(homePhotos);
+
   return {
-    homePhotos: (raw.homePhotos ?? []).map(toFetchedPhoto),
+    homePhotos: shuffledHomePhotos,
     albums: (raw.albums ?? []).map((album) => ({
       id: album.id,
       title: album.title,

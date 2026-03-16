@@ -14,6 +14,7 @@ const HeroCarousel = ({ photos, enableAutoUpgrade = true }: HeroCarouselProps) =
   const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
   const [showDetailCta, setShowDetailCta] = useState(true);
   const [upgradedToOriginal, setUpgradedToOriginal] = useState<Set<number>>(new Set());
+  const [dragStart, setDragStart] = useState<number | null>(null);
 
   const viewerAlbum: FetchedAlbum = useMemo(
     () => ({
@@ -35,6 +36,34 @@ const HeroCarousel = ({ photos, enableAutoUpgrade = true }: HeroCarouselProps) =
     if (photos.length === 0) return;
     setCurrent((p) => (p + 1) % photos.length);
   }, [photos.length]);
+
+  const prev = useCallback(() => {
+    if (photos.length === 0) return;
+    setCurrent((p) => (p - 1 + photos.length) % photos.length);
+  }, [photos.length]);
+
+  const handleDragStart = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    setDragStart(clientX);
+  }, []);
+
+  const handleDragEnd = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    if (dragStart === null) return;
+    
+    const clientX = 'changedTouches' in e ? e.changedTouches[0].clientX : e.clientX;
+    const diff = dragStart - clientX;
+    const threshold = 50;
+
+    if (Math.abs(diff) > threshold) {
+      if (diff > 0) {
+        next();
+      } else {
+        prev();
+      }
+    }
+
+    setDragStart(null);
+  }, [dragStart, next, prev]);
 
   useEffect(() => {
     if (photos.length === 0) return;
@@ -157,8 +186,13 @@ const HeroCarousel = ({ photos, enableAutoUpgrade = true }: HeroCarouselProps) =
   return (
     <section
       id="home"
-      className="relative w-full overflow-hidden"
+      className="relative w-full overflow-hidden cursor-grab active:cursor-grabbing"
       style={{ minHeight: "calc(var(--vh, 1vh) * 100)" }}
+      onMouseDown={handleDragStart}
+      onMouseUp={handleDragEnd}
+      onMouseLeave={() => setDragStart(null)}
+      onTouchStart={handleDragStart}
+      onTouchEnd={handleDragEnd}
     >
       {photos.map((photo, index) => {
         const isUpgraded = upgradedToOriginal.has(index);
