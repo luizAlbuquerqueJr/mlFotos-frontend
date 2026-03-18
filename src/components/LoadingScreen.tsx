@@ -1,16 +1,20 @@
 import { motion } from "framer-motion";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import logo from "@/assets/logo.png";
 
 const LOADING_TEXT = "Momentos únicos merecem ser vistos com a melhor qualidade.";
 const ANIMATION_DURATION_MS = 2000;
 const MIN_LOADING_DURATION_MS = 3000;
+const CHARS_PER_STEP = 2;
+const STEP_INTERVAL_MS = 50;
 
 interface LoadingScreenProps {
   onComplete?: () => void;
 }
 
 const LoadingScreen = ({ onComplete }: LoadingScreenProps) => {
+  const [visibleCount, setVisibleCount] = useState(0);
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       if (onComplete) onComplete();
@@ -20,6 +24,22 @@ const LoadingScreen = ({ onComplete }: LoadingScreenProps) => {
       window.clearTimeout(timer);
     };
   }, [onComplete]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setVisibleCount((prev) => {
+        if (prev >= LOADING_TEXT.length) {
+          window.clearInterval(timer);
+          return prev;
+        }
+        return Math.min(prev + CHARS_PER_STEP, LOADING_TEXT.length);
+      });
+    }, STEP_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
 
   return (
     <motion.div
@@ -44,36 +64,23 @@ const LoadingScreen = ({ onComplete }: LoadingScreenProps) => {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.2, duration: 0.4 }}
-          className="text-center text-xs sm:text-sm md:text-base text-muted-foreground/70"
+          className="text-center text-xs sm:text-sm md:text-base text-muted-foreground/70 leading-relaxed"
+          style={{ willChange: "contents" }}
         >
-          <span className="inline-block overflow-hidden whitespace-nowrap border-r-2 border-muted-foreground/40 pr-1 typewriter-animation">
-            {LOADING_TEXT}
+          {LOADING_TEXT.slice(0, visibleCount)}
+          <span 
+            className="inline-block w-[1ch] text-muted-foreground/40" 
+            aria-hidden
+            style={{ 
+              willChange: "opacity",
+              opacity: visibleCount >= LOADING_TEXT.length ? 0 : 1,
+              transition: "opacity 0.15s ease-out"
+            }}
+          >
+            |
           </span>
         </motion.p>
       </div>
-      <style>{`
-        @keyframes typewriter {
-          from {
-            width: 0;
-          }
-          to {
-            width: 100%;
-          }
-        }
-        
-        @keyframes blink {
-          50% {
-            border-color: transparent;
-          }
-        }
-        
-        .typewriter-animation {
-          width: 0;
-          animation: 
-            typewriter ${ANIMATION_DURATION_MS}ms steps(${LOADING_TEXT.length}) 0.5s forwards,
-            blink 0.75s step-end infinite;
-        }
-      `}</style>
     </motion.div>
   );
 };
