@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { motion } from "framer-motion";
 import PhotoViewer from "@/components/PhotoViewer";
 import type { FetchedAlbum, FetchedPhoto } from "@/lib/api";
@@ -8,6 +8,9 @@ interface HeroCarouselProps {
   enableAutoUpgrade?: boolean;
 }
 
+// Cache global de Blob URLs para imagens originais
+const originalBlobCache = new Map<string, string>();
+
 const HeroCarousel = ({ photos, enableAutoUpgrade = true }: HeroCarouselProps) => {
   const [current, setCurrent] = useState(0);
   const [isViewerOpen, setIsViewerOpen] = useState(false);
@@ -15,6 +18,7 @@ const HeroCarousel = ({ photos, enableAutoUpgrade = true }: HeroCarouselProps) =
   const [showDetailCta, setShowDetailCta] = useState(true);
   const [upgradedToOriginal, setUpgradedToOriginal] = useState<Set<number>>(new Set());
   const [dragStart, setDragStart] = useState<number | null>(null);
+  const imgRefs = useRef<Map<number, HTMLImageElement>>(new Map());
 
   const viewerAlbum: FetchedAlbum = useMemo(
     () => ({
@@ -105,65 +109,99 @@ const HeroCarousel = ({ photos, enableAutoUpgrade = true }: HeroCarouselProps) =
     let cancelled = false;
     const BATCH_SIZE = 2;
 
-    const processNextBatch = () => {
+    const processNextBatch = async () => {
       if (cancelled) return;
 
-      const nextIndicesToUpgrade: number[] = [];
+      // Cria lista de índices, pulando atual + 2 próximas (offset 3+)
+      const indicesToUpgrade: number[] = [];
       
-      for (let i = 0; i < photos.length && nextIndicesToUpgrade.length < BATCH_SIZE; i++) {
-        if (!upgradedToOriginal.has(i)) {
-          const photo = photos[i];
+      // Adiciona slides a partir do 3º à frente (current+3, current+4, ...)
+      // Pula: current, current+1, current+2
+      for (let offset = 3; offset < photos.length; offset++) {
+        const index = (current + offset) % photos.length;
+        if (!upgradedToOriginal.has(index)) {
+          const photo = photos[index];
           const originalSrc = photo.originalSrc?.trim();
           const currentSrc = photo.src?.trim();
           if (originalSrc && originalSrc !== currentSrc) {
-            nextIndicesToUpgrade.push(i);
+            indicesToUpgrade.push(index);
           }
         }
       }
 
+      // Pega apenas BATCH_SIZE imagens
+      const nextIndicesToUpgrade = indicesToUpgrade.slice(0, BATCH_SIZE);
+
       if (nextIndicesToUpgrade.length === 0) return;
 
-      const upgradePromises = nextIndicesToUpgrade.map((index) => {
+      // Upgrade usando fetch + Blob URL para evitar downloads duplicados
+      const upgradePromises = nextIndicesToUpgrade.map(async (index) => {
         const photo = photos[index];
         const originalSrc = photo.originalSrc?.trim();
-        if (!originalSrc) return Promise.resolve();
+        if (!originalSrc) return;
 
-        return new Promise<void>((resolve) => {
-          const img = new Image();
-          const upgradeImage = async () => {
-            try {
-              if (typeof img.decode === "function") {
-                await img.decode();
-              }
-            } catch {
-              // ignore decode errors
-            }
-            if (cancelled) {
-              resolve();
-              return;
-            }
+        // Verifica se já está no cache global
+        if (originalBlobCache.has(originalSrc)) {
+          const cachedBlobUrl = originalBlobCache.get(originalSrc)!;
+          photos[index] = {
+            ...photo,
+            originalSrc: cachedBlobUrl,
+          };
+          if (!cancelled) {
             setUpgradedToOriginal((prev) => new Set([...prev, index]));
-            resolve();
-          };
+          }
+          return;
+        }
 
-          img.onload = () => {
-            void upgradeImage();
-          };
-          img.onerror = () => {
+        try {
+          // Baixa como blob
+          const response = await fetch(originalSrc);
+          if (!response.ok) {
             if (!cancelled) {
               setUpgradedToOriginal((prev) => new Set([...prev, index]));
             }
-            resolve();
-          };
-          img.src = originalSrc;
-        });
-      });
+            return;
+          }
 
-      Promise.all(upgradePromises).then(() => {
-        if (!cancelled) {
-          processNextBatch();
+          const blob = await response.blob();
+          const blobUrl = URL.createObjectURL(blob);
+
+          // Armazena no cache global
+          originalBlobCache.set(originalSrc, blobUrl);
+
+          // Precarrega e decodifica
+          const img = new Image();
+          await new Promise<void>((resolve, reject) => {
+            img.onload = () => resolve();
+            img.onerror = () => reject();
+            img.src = blobUrl;
+          });
+
+          if (typeof img.decode === "function") {
+            await img.decode();
+          }
+
+          if (cancelled) return;
+
+          // Atualiza foto com Blob URL
+          photos[index] = {
+            ...photo,
+            originalSrc: blobUrl,
+          };
+
+          setUpgradedToOriginal((prev) => new Set([...prev, index]));
+        } catch (err) {
+          if (!cancelled) {
+            setUpgradedToOriginal((prev) => new Set([...prev, index]));
+          }
         }
       });
+
+      await Promise.all(upgradePromises);
+      
+      if (!cancelled) {
+        processNextBatch();
+      }
     };
 
     processNextBatch();
@@ -171,7 +209,7 @@ const HeroCarousel = ({ photos, enableAutoUpgrade = true }: HeroCarouselProps) =
     return () => {
       cancelled = true;
     };
-  }, [photos, upgradedToOriginal, enableAutoUpgrade]);
+  }, [photos, upgradedToOriginal, enableAutoUpgrade, current]);
 
   if (photos.length === 0) {
     return (
@@ -196,7 +234,9 @@ const HeroCarousel = ({ photos, enableAutoUpgrade = true }: HeroCarouselProps) =
     >
       {photos.map((photo, index) => {
         const isUpgraded = upgradedToOriginal.has(index);
-        const src = (isUpgraded && photo.originalSrc) ? photo.originalSrc.trim() : (photo.src?.trim() || "");
+        const src = (isUpgraded && photo.originalSrc) 
+          ? photo.originalSrc.trim() 
+          : (photo.previewSrc?.trim() || photo.src?.trim() || "");
         return (
         <motion.div
           key={photo.originalSrc || photo.src || `slide-${index}`}
@@ -206,6 +246,11 @@ const HeroCarousel = ({ photos, enableAutoUpgrade = true }: HeroCarouselProps) =
           style={{ willChange: "opacity" }}
         >
           <img
+            ref={(el) => {
+              if (el && !imgRefs.current.has(index)) {
+                imgRefs.current.set(index, el);
+              }
+            }}
             src={src}
             alt={photo.alt || `Slide ${index + 1}`}
             className="absolute inset-0 h-full w-full object-contain md:object-cover"
