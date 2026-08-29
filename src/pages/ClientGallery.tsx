@@ -1,33 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Download, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import Header from "@/components/Header";
-import PhotoViewer from "@/components/PhotoViewer";
+import { ClientPhotosExperience } from "@/components/ClientPhotosExperience";
 import { useToast } from "@/hooks/use-toast";
-import {
-  getUserById,
-  listManagerPath,
-  notifyAccess,
-  type ManagerFileItem,
-  type ManagerFolderItem,
-  type UserRecord,
-} from "@/lib/api";
-
-function buildAlbumFromFiles(user: UserRecord, files: ManagerFileItem[]) {
-  return {
-    id: user.id,
-    title: `Fotos de ${user.name}`,
-    cover: files[0]?.thumbUrl ?? files[0]?.previewUrl ?? files[0]?.url ?? "",
-    photos: files.map((f) => ({
-      src: f.previewUrl ?? f.url,
-      originalSrc: f.originalUrl ?? f.url,
-      alt: f.name,
-    })),
-  };
-}
+import { useClientPackage } from "@/hooks/useClientPackages";
+import { getClientPackage, getClientPhotoFileUrl, notifyClientSelection, toggleClientPhotoFavorite } from "@/lib/api";
+import { applyPhotoFavorite, openSelectionWhatsApp, type ClientPackage, type ClientPhoto } from "@/lib/clientPackages";
 
 function normalizeClientId(value: string) {
   return String(value || "")
@@ -43,7 +25,6 @@ async function downloadFromUrl(url: string, filename: string) {
 
   const blob = await res.blob();
   const blobUrl = URL.createObjectURL(blob);
-
   const a = document.createElement("a");
   a.href = blobUrl;
   a.download = filename || "download";
@@ -51,7 +32,6 @@ async function downloadFromUrl(url: string, filename: string) {
   document.body.appendChild(a);
   a.click();
   a.remove();
-
   setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
 }
 
@@ -59,7 +39,6 @@ const ClientGallery = () => {
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const lastAutoValidatedIdRef = useRef<string>("");
-  const didNotifyEntryRef = useRef(false);
 
   const initialId = useMemo(() => {
     const fromUrl = searchParams.get("id");
@@ -68,75 +47,32 @@ const ClientGallery = () => {
 
   const [codeInput, setCodeInput] = useState(initialId);
   const [busy, setBusy] = useState(false);
-  const [user, setUser] = useState<UserRecord | null>(null);
-  const [currentFolderPath, setCurrentFolderPath] = useState<string>("");
-  const [folders, setFolders] = useState<ManagerFolderItem[]>([]);
-  const [files, setFiles] = useState<ManagerFileItem[]>([]);
-  const [viewerOpen, setViewerOpen] = useState(false);
-  const [viewerIndex, setViewerIndex] = useState(0);
-  const [downloadingAll, setDownloadingAll] = useState(false);
-  const [downloadAllProgress, setDownloadAllProgress] = useState(0);
-  const [downloadBatchTotal, setDownloadBatchTotal] = useState(0);
-  const [downloadBatchCompleted, setDownloadBatchCompleted] = useState(0);
-  const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]);
+  const [activeClientId, setActiveClientId] = useState<string>("");
   const [mustReadBestPractices, setMustReadBestPractices] = useState(false);
   const [bestPracticesProgress, setBestPracticesProgress] = useState(0);
   const [bestPracticesProgressDone, setBestPracticesProgressDone] = useState(false);
-
   const bestPracticesSectionRef = useRef<HTMLElement | null>(null);
 
-  const rootClientFolderPath = useMemo(() => {
-    return user ? `clientes/${user.id}` : "";
-  }, [user]);
+  const { client, setClient } = useClientPackage(activeClientId);
+  const clientRef = useRef<ClientPackage | undefined>(client);
+  clientRef.current = client;
+  const favoriteSyncRef = useRef({
+    inFlight: new Set<string>(),
+    desired: new Map<string, boolean>(),
+    acked: new Map<string, boolean>(),
+  });
 
-  const breadcrumbs = useMemo(() => {
-    if (!rootClientFolderPath || !currentFolderPath) return [] as string[];
-    if (currentFolderPath === rootClientFolderPath) return [] as string[];
-    if (!currentFolderPath.startsWith(rootClientFolderPath + "/")) return [] as string[];
-
-    const rel = currentFolderPath.slice(rootClientFolderPath.length + 1);
-    return rel.split("/").filter(Boolean);
-  }, [currentFolderPath, rootClientFolderPath]);
-
-  const loadListing = async (folderPath: string, bucket: "clientes") => {
-    const listing = await listManagerPath(folderPath, bucket);
-    setFolders(listing.folders);
-    setFiles(listing.files);
-  };
-
-  const listAllClientFilesRecursive = async (clientRootPath: string) => {
-    const all: ManagerFileItem[] = [];
-    const queue: string[] = [clientRootPath];
-
-    while (queue.length > 0) {
-      const nextPath = queue.shift();
-      if (!nextPath) continue;
-      const listing = await listManagerPath(nextPath, "clientes");
-
-      for (const folder of listing.folders) {
-        if (folder?.path) queue.push(folder.path);
-      }
-
-      for (const file of listing.files) {
-        if (file.name === ".keep") continue;
-        all.push(file);
-      }
-    }
-
-    return all;
-  };
+  useEffect(() => {
+    favoriteSyncRef.current = {
+      inFlight: new Set(),
+      desired: new Map(),
+      acked: new Map(),
+    };
+  }, [activeClientId]);
 
   useEffect(() => {
     setCodeInput(initialId);
   }, [initialId]);
-
-  useEffect(() => {
-    if (didNotifyEntryRef.current) return;
-    didNotifyEntryRef.current = true;
-
-    notifyAccess(window.location.pathname)
-      .catch((err) => console.error("Error notifying access:", err));
-  }, []);
 
   const validateId = async (
     rawId: string,
@@ -146,31 +82,18 @@ const ClientGallery = () => {
     if (!normalized) {
       toast({
         variant: "destructive",
-        title: "Informe o id",
-        description: "Digite o id do cliente para acessar as fotos.",
+        title: "Informe o código",
+        description: "Digite o código que a Mônica te enviou para ver as fotos.",
       });
       return;
     }
 
-    // if (!/^[A-HJ-NP-Z2-9]{20}$/.test(normalized)) {
-    //   toast({
-    //     variant: "destructive",
-    //     title: "Código inválido",
-    //     description: "O código deve ter 20 caracteres. Verifique e tente novamente.",
-    //   });
-    //   return;
-    // }
-
     setBusy(true);
     try {
-      const resolvedUser = await getUserById(normalized);
-      setUser(resolvedUser);
-      setSearchParams({ id: resolvedUser.id });
+      const resolved = await getClientPackage(normalized);
 
-      const folderPath = `clientes/${resolvedUser.id}`;
-      setCurrentFolderPath(folderPath);
-      await loadListing(folderPath, "clientes");
-
+      setActiveClientId(resolved.id);
+      setSearchParams({ id: resolved.id });
       setMustReadBestPractices(true);
       setBestPracticesProgress(0);
       setBestPracticesProgressDone(false);
@@ -182,26 +105,18 @@ const ClientGallery = () => {
       }
 
       if (options?.showSuccessToast !== false) {
-        toast({ title: "ID validado" });
+        toast({ title: "Fotos encontradas", description: `Olá, ${resolved.name.split(" ")[0]}.` });
       }
     } catch (error) {
-      setUser(null);
-      setCurrentFolderPath("");
-      setFolders([]);
-      setFiles([]);
-
+      setActiveClientId("");
       toast({
         variant: "destructive",
-        title: "ID inválido",
-        description: error instanceof Error ? error.message : "Não foi possível validar o id.",
+        title: "Código inválido",
+        description: error instanceof Error ? error.message : "Não foi possível abrir as fotos.",
       });
     } finally {
       setBusy(false);
     }
-  };
-
-  const handleValidate = async () => {
-    await validateId(codeInput, { showSuccessToast: false, autoScrollToBestPractices: true });
   };
 
   useEffect(() => {
@@ -239,203 +154,86 @@ const ClientGallery = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialId]);
 
-  const album = useMemo(() => {
-    if (!user) return null;
-    if (files.length === 0) return null;
-    return buildAlbumFromFiles(user, files);
-  }, [files, user]);
+  const flushFavorite = useCallback(
+    async (clientId: string, photoId: string) => {
+      const sync = favoriteSyncRef.current;
+      if (sync.inFlight.has(photoId)) return;
+      sync.inFlight.add(photoId);
 
-  const selectedPathsSet = useMemo(() => new Set(selectedFilePaths), [selectedFilePaths]);
-  const selectedVisibleCount = useMemo(
-    () => files.reduce((count, file) => count + (selectedPathsSet.has(file.path) ? 1 : 0), 0),
-    [files, selectedPathsSet]
+      try {
+        while (sync.desired.has(photoId)) {
+          const favorited = sync.desired.get(photoId)!;
+          sync.desired.delete(photoId);
+          try {
+            const result = await toggleClientPhotoFavorite(clientId, photoId, favorited);
+            sync.acked.set(photoId, result.favorited);
+          } catch (error) {
+            const revertTo = sync.acked.has(photoId) ? sync.acked.get(photoId)! : !favorited;
+            const current = clientRef.current;
+            if (current) {
+              const reverted = applyPhotoFavorite(current, photoId, revertTo);
+              clientRef.current = reverted;
+              setClient(reverted);
+            }
+            toast({
+              variant: "destructive",
+              title: "Não foi possível guardar essa foto",
+              description: error instanceof Error ? error.message : "Tente de novo.",
+            });
+            break;
+          }
+        }
+      } finally {
+        sync.inFlight.delete(photoId);
+        if (sync.desired.has(photoId)) {
+          void flushFavorite(clientId, photoId);
+        }
+      }
+    },
+    [setClient, toast]
   );
 
-  useEffect(() => {
-    setSelectedFilePaths((prev) => prev.filter((path) => files.some((file) => file.path === path)));
-  }, [files]);
+  const handleToggleFavorite = useCallback(
+    (photoId: string) => {
+      const current = clientRef.current;
+      if (!current || !current.photoSelectionEnabled) return;
+      const photo = current.photos.find((item) => item.id === photoId);
+      if (!photo || photo.status === "released") return;
 
-  const handleOpenFolder = async (folder: ManagerFolderItem) => {
-    if (!user) return;
-    if (!folder?.path) return;
+      const nextFavorited = !photo.favorited;
+      const nextClient = applyPhotoFavorite(current, photoId, nextFavorited);
+      clientRef.current = nextClient;
+      setClient(nextClient);
 
-    setBusy(true);
-    try {
-      setCurrentFolderPath(folder.path);
-      await loadListing(folder.path, "clientes");
-    } catch (error) {
+      favoriteSyncRef.current.desired.set(photoId, nextFavorited);
+      void flushFavorite(current.id, photoId);
+    },
+    [flushFavorite, setClient]
+  );
+
+  const handleDownload = async (photo: ClientPhoto) => {
+    if (!client || photo.status !== "released") {
       toast({
         variant: "destructive",
-        title: "Erro ao abrir pasta",
-        description: error instanceof Error ? error.message : "Falha ao carregar pasta.",
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleGoToPath = async (path: string) => {
-    if (!user) return;
-    if (!path) return;
-
-    setBusy(true);
-    try {
-      setCurrentFolderPath(path);
-      await loadListing(path, "clientes");
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Erro ao carregar",
-        description: error instanceof Error ? error.message : "Falha ao carregar pasta.",
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleDownloadOne = async (file: ManagerFileItem) => {
-    await downloadFromUrl(file.originalUrl ?? file.url, file.name);
-  };
-
-  const toggleFileSelection = (filePath: string) => {
-    setSelectedFilePaths((prev) =>
-      prev.includes(filePath) ? prev.filter((path) => path !== filePath) : [...prev, filePath]
-    );
-  };
-
-  const selectAllVisibleFiles = () => {
-    setSelectedFilePaths(files.map((file) => file.path));
-  };
-
-  const clearSelection = () => {
-    setSelectedFilePaths([]);
-  };
-
-  const getDownloadName = (file: ManagerFileItem) => {
-    const normalizedPath = String(file.path || "").trim();
-    if (rootClientFolderPath && normalizedPath.startsWith(rootClientFolderPath + "/")) {
-      const relativePath = normalizedPath.slice(rootClientFolderPath.length + 1);
-      return relativePath.replace(/\//g, "_");
-    }
-    return file.name;
-  };
-
-  const downloadBatch = async (items: ManagerFileItem[]) => {
-    const total = items.length;
-    if (total === 0) {
-      toast({
-        variant: "destructive",
-        title: "Nada para baixar",
-        description: "Nenhuma foto disponível no momento.",
+        title: "Foto ainda não liberada",
+        description: "A versão em alta só fica disponível depois que a Mônica liberar.",
       });
       return;
     }
+    await downloadFromUrl(getClientPhotoFileUrl(client.id, photo.id), photo.name);
+  };
 
-    setDownloadingAll(true);
-    setDownloadAllProgress(0);
-    setDownloadBatchTotal(total);
-    setDownloadBatchCompleted(0);
-
-    try {
-      const supportsFileSystemAccess = "showDirectoryPicker" in window;
-
-      if (supportsFileSystemAccess) {
-        try {
-          const dirHandle = await (window as unknown as { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker();
-          let failures = 0;
-
-          for (let i = 0; i < items.length; i += 1) {
-            const file = items[i];
-            try {
-              const res = await fetch(file.originalUrl ?? file.url, { method: "GET", cache: "force-cache" });
-              if (!res.ok) throw new Error(`Falha ao baixar: ${res.status}`);
-              const blob = await res.blob();
-
-              const fileHandle = await dirHandle.getFileHandle(getDownloadName(file), { create: true });
-              const writable = await fileHandle.createWritable();
-              await writable.write(blob);
-              await writable.close();
-            } catch {
-              failures += 1;
-            }
-
-            const completed = i + 1;
-            const pct = Math.min(100, Math.round((completed / total) * 100));
-            setDownloadBatchCompleted(completed);
-            setDownloadAllProgress(pct);
-          }
-
-          toast({
-            title: "Fotos baixadas",
-            description: failures > 0 ? `${failures} arquivo(s) não puderam ser baixados.` : undefined,
-          });
-        } catch (error) {
-          if ((error as Error).name === "AbortError") {
-            toast({
-              title: "Download cancelado",
-              description: "Você cancelou a seleção da pasta.",
-            });
-          } else {
-            throw error;
-          }
-        }
-      } else {
-        toast({
-          title: "Atenção",
-          description: "Seu navegador vai pedir confirmação para cada foto. Recomendamos usar Chrome ou Edge para uma experiência melhor.",
-        });
-
-        let failures = 0;
-        for (let i = 0; i < items.length; i += 1) {
-          const file = items[i];
-          try {
-            await downloadFromUrl(file.originalUrl ?? file.url, getDownloadName(file));
-          } catch {
-            failures += 1;
-          }
-
-          const completed = i + 1;
-          const pct = Math.min(100, Math.round((completed / total) * 100));
-          setDownloadBatchCompleted(completed);
-          setDownloadAllProgress(pct);
-          await new Promise((resolve) => setTimeout(resolve, 150));
-        }
-
-        toast({
-          title: "Fotos baixadas",
-          description: failures > 0 ? `${failures} arquivo(s) não puderam ser baixados.` : undefined,
-        });
+  const handleDownloadAllOwned = async () => {
+    if (!client) return;
+    const owned = client.photos.filter((photo) => photo.status === "released");
+    for (const photo of owned) {
+      try {
+        await downloadFromUrl(getClientPhotoFileUrl(client.id, photo.id), photo.name);
+      } catch {
+        // keep going so a single failure doesn't stop the rest
       }
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Erro ao baixar",
-        description: error instanceof Error ? error.message : "Falha ao baixar as fotos.",
-      });
-    } finally {
-      setDownloadingAll(false);
     }
-  };
-
-  const handleDownloadAll = async () => {
-    if (!user) return;
-    try {
-      const rootPath = `clientes/${user.id}`;
-      const allFiles = await listAllClientFilesRecursive(rootPath);
-      await downloadBatch(allFiles);
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Erro ao baixar",
-        description: error instanceof Error ? error.message : "Falha ao baixar as fotos.",
-      });
-    }
-  };
-
-  const handleDownloadSelected = async () => {
-    if (!user) return;
-    const selectedFiles = files.filter((file) => selectedPathsSet.has(file.path));
-    await downloadBatch(selectedFiles);
+    toast({ title: "Download iniciado", description: "Salvamos as fotos do seu pacote." });
   };
 
   return (
@@ -453,27 +251,36 @@ const ClientGallery = () => {
         <section className="rounded-lg border border-border/60 bg-card p-5 space-y-3">
           <div className="space-y-2">
             <label className="text-sm text-muted-foreground" htmlFor="client-code">
-              ID do cliente
+              Seu código
             </label>
             <div className="flex flex-col sm:flex-row gap-2">
               <Input
                 id="client-code"
                 value={codeInput}
-                onChange={(e) => setCodeInput(e.target.value)}
-                placeholder="Ex: A1B2C3D4E5F6"
+                onChange={(event) => setCodeInput(event.target.value)}
+                placeholder="Cole aqui o código que você recebeu"
                 autoComplete="one-time-code"
                 disabled={busy}
               />
-              <Button onClick={() => void handleValidate()} disabled={busy}>
-                {busy ? "Validando..." : "Acessar"}
+              <Button onClick={() => void validateId(codeInput, { showSuccessToast: false })} disabled={busy}>
+                {busy ? "Abrindo..." : "Ver minhas fotos"}
               </Button>
             </div>
-
-            {user && (
-              <p className="text-sm text-muted-foreground">
-                Olá, <span className="text-foreground">{user.name}</span>.
-              </p>
-            )}
+            <p className="text-xs text-muted-foreground">
+              Para testar, use os códigos{" "}
+              <button type="button" className="underline" onClick={() => setCodeInput("ana")}>
+                ana
+              </button>
+              ,{" "}
+              <button type="button" className="underline" onClick={() => setCodeInput("bruno")}>
+                bruno
+              </button>{" "}
+              ou{" "}
+              <button type="button" className="underline" onClick={() => setCodeInput("carla")}>
+                carla
+              </button>
+              .
+            </p>
           </div>
         </section>
 
@@ -491,21 +298,20 @@ const ClientGallery = () => {
                 <Sparkles className="h-5 w-5" />
               </div>
               <div className="space-y-1">
-                <h2 className={
-                  mustReadBestPractices
-                    ? "text-xl font-bold tracking-normal leading-snug text-primary"
-                    : "text-xl font-bold tracking-normal leading-snug text-foreground"
-                }>
+                <h2
+                  className={
+                    mustReadBestPractices
+                      ? "text-xl font-bold tracking-normal leading-snug text-primary"
+                      : "text-xl font-bold tracking-normal leading-snug text-foreground"
+                  }
+                >
                   Boas práticas para arrasar nas redes sociais
                 </h2>
                 {mustReadBestPractices && (
-                  <p className="text-sm font-medium text-primary">
-                    Leia até o final para liberar as fotos.
-                  </p>
+                  <p className="text-sm font-medium text-primary">Leia até o final para liberar as fotos.</p>
                 )}
               </div>
             </div>
-
             {mustReadBestPractices && (
               <span className="shrink-0 rounded-full bg-primary px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-primary-foreground">
                 Obrigatório
@@ -516,238 +322,84 @@ const ClientGallery = () => {
           <div className="space-y-3 text-base text-muted-foreground">
             <ul className="list-disc pl-5 space-y-2">
               <li>
-                <span className="text-foreground">Quer postar com qualidade máxima? ✨</span> Baixe a foto e poste o arquivo original (evite "reenviar" várias vezes a mesma
-                imagem, porque isso prejudica a qualidade).
+                <span className="text-foreground">Quer postar com qualidade máxima?</span> Baixe a foto e poste o arquivo original.
               </li>
               <li>
-                No WhatsApp, se puder, envie como <span className="text-foreground">Documento</span> 📄 (assim não comprime). Se
-                mandar como imagem, marque a opção de HD 😎.
+                No WhatsApp, se puder, envie como <span className="text-foreground">Documento</span>. Se mandar como imagem, marque HD.
               </li>
               <li>
-                <span className="text-foreground">No Instagram, fuja de print/screenshot 📸 e de ficar editando mil vezes</span>. Poste direto do arquivo e, se for recortar,
-                recorte só uma vez.
+                <span className="text-foreground">No Instagram, fuja de print</span> e de ficar editando mil vezes.
               </li>
               <li>
-                <span className="text-foreground"> Evite montar grid (tipo 4 fotos em 1) </span>. Isso diminui a resolução e pode
-                deixar a imagem com cara de baixa qualidade.
-              </li>
-              <li>
-                Na hora de baixar, garanta uma internet estável para não travar no meio. <span className="text-foreground">Evite dados móveis</span>, as
-                fotos são pesadinhas e podem consumir seu pacote rapidinho 😅.
-              </li>
-              <li>
-                <span className="text-foreground">Guardaremos suas fotos por até 3 meses.</span> Após esse período, a responsabilidade de manter os arquivos salvos será sua, combinado? 🤗
+                <span className="text-foreground">Guardaremos suas fotos por até 3 meses.</span> Depois, a responsabilidade de manter os arquivos é sua.
               </li>
             </ul>
 
             {mustReadBestPractices && !bestPracticesProgressDone && (
               <div className="space-y-2 pt-2">
                 <Progress value={bestPracticesProgress} />
-                <p className="text-sm text-muted-foreground">
-                  Carregando... este tempo é apenas para você ler a mensagem acima.
-                </p>
+                <p className="text-sm text-muted-foreground">Este tempo é só para você ler o recado acima.</p>
               </div>
             )}
 
             {mustReadBestPractices && bestPracticesProgressDone && (
               <div className="pt-2">
-                <Button
-                  type="button"
-                  onClick={() => setMustReadBestPractices(false)}
-                  className="w-full"
-                >
-                  Já li as boas práticas, quero ver as fotos.
+                <Button type="button" onClick={() => setMustReadBestPractices(false)} className="w-full">
+                  Já li, quero ver as fotos
                 </Button>
               </div>
             )}
           </div>
         </section>
 
-        <section className="rounded-lg border border-border/60 bg-card p-5 space-y-4">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">Fotos</h2>
+        {!mustReadBestPractices && client && (
+          <ClientPhotosExperience
+            client={client}
+            onToggleFavorite={handleToggleFavorite}
+            onNotifyWhatsApp={() => {
+              void (async () => {
+                const opened = openSelectionWhatsApp(client);
+                if (!opened) {
+                  toast({
+                    variant: "destructive",
+                    title: "Escolha as fotos",
+                    description: "Toque no coração nas fotos que você quer antes de avisar no WhatsApp.",
+                  });
+                  return;
+                }
+                try {
+                  const next = await notifyClientSelection(client.id);
+                  setClient(next);
+                } catch {
+                  // WhatsApp já abriu; o aviso no servidor pode ser tentado de novo depois
+                }
+                toast({
+                  title: "WhatsApp aberto",
+                  description: "Mande a mensagem para a Mônica. Depois ela libera as fotos neste mesmo link.",
+                });
+              })();
+            }}
+            onDownload={(photo) => {
+              void handleDownload(photo);
+            }}
+            onDownloadAllOwned={() => {
+              void handleDownloadAllOwned();
+            }}
+          />
+        )}
 
-          {mustReadBestPractices && (
-            <p className="text-sm text-muted-foreground">
-              Aguarde um instante e leia as boas práticas acima.
-            </p>
-          )}
+        {!mustReadBestPractices && !client && (
+          <p className="text-sm text-muted-foreground">{busy ? "Abrindo suas fotos..." : "Informe seu código para ver as fotos."}</p>
+        )}
 
-          {!mustReadBestPractices && user && (
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => void handleGoToPath(rootClientFolderPath)}
-                  >
-                    Raiz
-                  </Button>
-
-                  {breadcrumbs.map((segment, index) => {
-                    const path = [rootClientFolderPath, ...breadcrumbs.slice(0, index + 1)].filter(Boolean).join("/");
-                    return (
-                      <Button
-                        key={path}
-                        size="sm"
-                        variant="outline"
-                        disabled={busy}
-                        onClick={() => void handleGoToPath(path)}
-                      >
-                        {segment}
-                      </Button>
-                    );
-                  })}
-
-                  {currentFolderPath && (
-                    <span className="text-muted-foreground">/ {currentFolderPath}</span>
-                  )}
-                </div>
-
-                <Button className="w-full" variant="outline" size="sm" onClick={() => void handleDownloadAll()} disabled={downloadingAll}>
-                  {downloadingAll ? "Baixando..." : "Baixar todas as imagens"}
-                </Button>
-
-                <Button
-                  className="w-full"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void handleDownloadSelected()}
-                  disabled={downloadingAll || selectedVisibleCount === 0}
-                >
-                  {downloadingAll ? "Baixando..." : `Baixar selecionadas (${selectedVisibleCount})`}
-                </Button>
-              </div>
-
-              {downloadingAll && (
-                <div className="space-y-2">
-                  <Progress value={downloadAllProgress} />
-                  <p className="text-sm text-muted-foreground">
-                    {downloadAllProgress}% concluído ({downloadBatchCompleted}/{downloadBatchTotal})
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {!mustReadBestPractices && !user && (
-            <p className="text-sm text-muted-foreground">{busy ? "Carregando fotos..." : "Informe seu id para visualizar as fotos."}</p>
-          )}
-
-          {!mustReadBestPractices && user && folders.length === 0 && files.length === 0 && (
-            <p className="text-sm text-muted-foreground">Nenhuma foto disponível no momento.</p>
-          )}
-
-          {!mustReadBestPractices && user && folders.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-sm text-muted-foreground">Pastas</p>
-              <ul className="space-y-2">
-                {folders.map((folder) => (
-                  <li key={folder.path}>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full justify-start"
-                      disabled={busy}
-                      onClick={() => void handleOpenFolder(folder)}
-                    >
-                      📁 {folder.name}
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {!mustReadBestPractices && user && files.length > 0 && (
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button type="button" size="sm" variant="outline" onClick={selectAllVisibleFiles} disabled={downloadingAll}>
-                Selecionar todas
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={clearSelection} disabled={downloadingAll || selectedVisibleCount === 0}>
-                Limpar seleção
-              </Button>
-            </div>
-          )}
-
-          {!mustReadBestPractices && user && files.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {files.map((file, index) => (
-                <div
-                  key={file.path}
-                  className={`group relative overflow-hidden rounded border bg-muted/10 ${
-                    selectedPathsSet.has(file.path) ? "border-primary ring-1 ring-primary/40" : "border-border/40"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    className={`absolute left-2 top-2 z-10 rounded-md px-2 py-1 text-xs font-semibold backdrop-blur-sm ${
-                      selectedPathsSet.has(file.path)
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-black/60 text-white hover:bg-black/70"
-                    }`}
-                    aria-label={selectedPathsSet.has(file.path) ? "Desmarcar foto" : "Selecionar foto"}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      toggleFileSelection(file.path);
-                    }}
-                  >
-                    {selectedPathsSet.has(file.path) ? "Selecionada" : "Selecionar"}
-                  </button>
-
-                  <button
-                    type="button"
-                    className="absolute right-2 top-2 z-10 rounded-md bg-black/60 p-2 text-white backdrop-blur-sm hover:bg-black/70"
-                    aria-label="Baixar foto"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      void handleDownloadOne(file);
-                    }}
-                  >
-                    <Download className="h-4 w-4" />
-                  </button>
-
-                  <button
-                    type="button"
-                    className="block w-full"
-                    onClick={() => {
-                      setViewerIndex(index);
-                      setViewerOpen(true);
-                    }}
-                  >
-                  <img
-                    src={file.thumbUrl ?? file.previewUrl ?? file.url}
-                    alt={file.name}
-                    loading="lazy"
-                    decoding="async"
-                    className="aspect-square w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-                  />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {!mustReadBestPractices && user && files.length > 0 && (
+        {!mustReadBestPractices && client && (
           <div className="pt-2">
-            <Button asChild className="w-full">
+            <Button asChild className="w-full" variant="outline">
               <Link to="/">Conheça mais sobre nosso trabalho</Link>
             </Button>
           </div>
         )}
       </div>
-
-      {viewerOpen && album && (
-        <PhotoViewer
-          album={album}
-          onClose={() => setViewerOpen(false)}
-          initialPhotoIndex={viewerIndex}
-        />
-      )}
     </main>
   );
 };

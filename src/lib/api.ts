@@ -1,3 +1,6 @@
+import type { ClientContract, ClientPackage, ClientPhoto, ClientPhotoStatus } from "@/lib/clientPackages";
+import { DEFAULT_CONTRACT, normalizeClientContract } from "@/lib/clientPackages";
+
 function readEnvUrl(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -28,11 +31,31 @@ const USERS_URL =
 
 const BUCKET_SIZE_URL = USERS_URL.replace("/users", "/bucket-size");
 
+export function getClientPhotoPreviewUrl(clientId: string, photoId: string): string {
+  const id = String(clientId || "").trim();
+  const file = String(photoId || "").trim();
+  if (!id || !file) return "";
+  return `${USERS_URL}/${encodeURIComponent(id)}/photos/${encodeURIComponent(file)}/preview`;
+}
+
+export function getClientPhotoFileUrl(clientId: string, photoId: string): string {
+  const id = String(clientId || "").trim();
+  const file = String(photoId || "").trim();
+  if (!id || !file) {
+    throw new Error("Informe o id do cliente e da foto");
+  }
+  return `${USERS_URL}/${encodeURIComponent(id)}/photos/${encodeURIComponent(file)}/file`;
+}
+
 export type StorageBucketKey = "site" | "clientes";
 
 export interface UserRecord {
   id: string;
   name: string;
+  contract?: ClientContract;
+  selectionSubmittedAt?: string | null;
+  photoSelectionEnabled?: boolean;
+  photos?: ClientPhoto[];
 }
 
 export interface BucketSizes {
@@ -41,10 +64,17 @@ export interface BucketSizes {
   total: number;
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+async function fetchJson<T>(url: string, init?: RequestInit, authToken?: string): Promise<T> {
+  const headers = { ...(init?.headers || {}) };
+  if (authToken) {
+    headers["Authorization"] = `Bearer ${authToken}`;
+  }
+
   const response = await fetch(url, {
     mode: "cors",
+    cache: "no-store",
     ...init,
+    headers,
   });
 
   if (!response.ok) {
@@ -61,58 +91,178 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function listUsers(): Promise<UserRecord[]> {
-  const payload = await fetchJson<{ users?: Array<Partial<UserRecord>> }>(USERS_URL, { method: "GET" });
-  return (payload.users ?? [])
-    .filter((u) => typeof u.id === "string" && typeof u.name === "string")
-    .map((u) => ({ id: u.id as string, name: u.name as string }));
+function parsePhoto(raw: unknown, clientId: string): ClientPhoto | null {
+  if (!raw || typeof raw !== "object") return null;
+  const photo = raw as Record<string, unknown>;
+  if (typeof photo.id !== "string" || typeof photo.name !== "string") return null;
+  const status: ClientPhotoStatus = photo.status === "released" ? "released" : "selectable";
+  return {
+    id: photo.id,
+    name: photo.name,
+    previewUrl: getClientPhotoPreviewUrl(clientId, photo.id),
+    originalUrl: status === "released" ? getClientPhotoFileUrl(clientId, photo.id) : "",
+    status,
+    favorited: Boolean(photo.favorited),
+  };
 }
 
-export async function getUserById(id: string): Promise<UserRecord> {
+function parseClientPackage(raw: unknown): ClientPackage | null {
+  if (!raw || typeof raw !== "object") return null;
+  const user = raw as Record<string, unknown>;
+  if (typeof user.id !== "string" || typeof user.name !== "string") return null;
+  const photos = Array.isArray(user.photos)
+    ? user.photos
+        .map((photo) => parsePhoto(photo, user.id))
+        .filter((photo): photo is ClientPhoto => Boolean(photo))
+    : [];
+  return {
+    id: user.id,
+    name: user.name,
+    contract: normalizeClientContract(user.contract as Partial<ClientContract> | undefined),
+    photos,
+    selectionSubmittedAt: typeof user.selectionSubmittedAt === "string" ? user.selectionSubmittedAt : undefined,
+    photoSelectionEnabled: user.photoSelectionEnabled === true,
+  };
+}
+
+export async function listClientPackages(authToken?: string): Promise<ClientPackage[]> {
+  const payload = await fetchJson<{ users?: unknown[] }>(USERS_URL, { method: "GET" }, authToken);
+  return (payload.users ?? []).map(parseClientPackage).filter((item): item is ClientPackage => Boolean(item));
+}
+
+export async function getClientPackage(id: string, authToken?: string): Promise<ClientPackage> {
   const normalized = String(id || "").trim();
   if (!normalized) {
     throw new Error("Informe o id do cliente");
   }
 
-  const payload = await fetchJson<{ user?: Partial<UserRecord> }>(
+  const payload = await fetchJson<{ user?: unknown }>(
     `${USERS_URL}/${encodeURIComponent(normalized)}`,
-    { method: "GET" }
+    { method: "GET" },
+    authToken
   );
 
-  const user = payload.user;
-  if (!user || typeof user.id !== "string" || typeof user.name !== "string") {
+  const user = parseClientPackage(payload.user);
+  if (!user) {
     throw new Error("Resposta inválida ao validar id");
   }
-
-  return { id: user.id, name: user.name };
+  return user;
 }
 
-export async function createUser(name: string): Promise<UserRecord> {
-  const payload = await fetchJson<Partial<UserRecord>>(USERS_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
+export async function listUsers(authToken?: string): Promise<UserRecord[]> {
+  const packages = await listClientPackages(authToken);
+  return packages.map((item) => ({
+    id: item.id,
+    name: item.name,
+    contract: item.contract,
+    selectionSubmittedAt: item.selectionSubmittedAt,
+    photos: item.photos,
+  }));
+}
 
-  if (!payload.id || !payload.name) {
+export async function getUserById(id: string, authToken?: string): Promise<UserRecord> {
+  const client = await getClientPackage(id, authToken);
+  return {
+    id: client.id,
+    name: client.name,
+    contract: client.contract,
+    selectionSubmittedAt: client.selectionSubmittedAt,
+    photoSelectionEnabled: client.photoSelectionEnabled,
+    photos: client.photos,
+  };
+}
+
+export async function createUser(
+  name: string,
+  authToken?: string,
+  contract: ClientContract = DEFAULT_CONTRACT
+): Promise<ClientPackage> {
+  const payload = await fetchJson<unknown>(
+    USERS_URL,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, contract }),
+    },
+    authToken
+  );
+
+  const created = parseClientPackage(payload);
+  if (!created) {
     throw new Error("Resposta inválida ao criar usuário");
   }
-
-  return { id: payload.id, name: payload.name };
+  return created;
 }
 
-export async function updateUser(id: string, patch: { name?: string }): Promise<void> {
-  await fetchJson<{ ok?: boolean }>(`${USERS_URL}/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
+export async function updateUser(
+  id: string,
+  patch: { name?: string; contract?: Partial<ClientContract> },
+  authToken?: string
+): Promise<ClientPackage> {
+  const payload = await fetchJson<{ user?: unknown }>(
+    `${USERS_URL}/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    },
+    authToken
+  );
+
+  const updated = parseClientPackage(payload.user);
+  if (!updated) {
+    throw new Error("Resposta inválida ao atualizar cliente");
+  }
+  return updated;
 }
 
-export async function deleteUser(id: string): Promise<void> {
+export async function deleteUser(id: string, authToken?: string): Promise<void> {
   await fetchJson<{ ok?: boolean }>(`${USERS_URL}/${encodeURIComponent(id)}`, {
     method: "DELETE",
+  }, authToken);
+}
+
+export async function toggleClientPhotoFavorite(
+  id: string,
+  photoId: string,
+  favorited: boolean
+): Promise<{ photoId: string; favorited: boolean }> {
+  const payload = await fetchJson<{ photoId?: unknown; favorited?: unknown }>(
+    `${USERS_URL}/${encodeURIComponent(id)}/photos/favorite`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ photoId, favorited }),
+    }
+  );
+  if (typeof payload.photoId !== "string" || typeof payload.favorited !== "boolean") {
+    throw new Error("Resposta inválida ao salvar o coração");
+  }
+  return { photoId: payload.photoId, favorited: payload.favorited };
+}
+
+export async function notifyClientSelection(id: string): Promise<ClientPackage> {
+  const payload = await fetchJson<{ user?: unknown }>(`${USERS_URL}/${encodeURIComponent(id)}/selection/notify`, {
+    method: "POST",
   });
+  const updated = parseClientPackage(payload.user);
+  if (!updated) {
+    throw new Error("Resposta inválida ao avisar a seleção");
+  }
+  return updated;
+}
+
+export async function releaseClientPhotos(id: string, authToken?: string): Promise<ClientPackage> {
+  const payload = await fetchJson<{ user?: unknown }>(
+    `${USERS_URL}/${encodeURIComponent(id)}/photos/release`,
+    { method: "POST" },
+    authToken
+  );
+  const updated = parseClientPackage(payload.user);
+  if (!updated) {
+    throw new Error("Resposta inválida ao liberar fotos");
+  }
+  return updated;
 }
 
 export function getClientPhotosZipUrl(id: string): string {
@@ -161,15 +311,17 @@ function withBucketQuery(url: string, bucket: StorageBucketKey): string {
 
 async function postStorageOperation<T>(
   body: Record<string, unknown>,
-  opts?: { bucket?: StorageBucketKey }
+  opts?: { bucket?: StorageBucketKey; authToken?: string }
 ): Promise<T> {
   const bucket = opts?.bucket ?? "site";
   const url = withBucketQuery(STORAGE_UPLOAD_URL, bucket);
+  const authToken = typeof opts?.authToken === "string" ? opts.authToken.trim() : "";
 
   const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
     },
     body: JSON.stringify(body),
     mode: "cors",
@@ -416,24 +568,28 @@ export async function fetchSiteData(): Promise<SiteData> {
   return parseStorageListPayload(data);
 }
 
-export async function listManagerPath(path = "", bucket: StorageBucketKey = "site"): Promise<ManagerListing> {
+export async function listManagerPath(
+  path = "",
+  bucket: StorageBucketKey = "site",
+  authToken?: string
+): Promise<ManagerListing> {
   const payload = await postStorageOperation<unknown>(
     {
     operation: "listManager",
     currentPath: path,
     },
-    { bucket }
+    { bucket, authToken }
   );
 
   return parseManagerPayload(payload);
 }
 
-export async function buildManifest(): Promise<string> {
+export async function buildManifest(authToken?: string): Promise<string> {
   const payload = await postStorageOperation<{ url?: string }>(
     {
       operation: "buildManifest",
     },
-    { bucket: "site" }
+    { bucket: "site", authToken }
   );
 
   if (!payload.url) {
@@ -491,7 +647,8 @@ export async function uploadImage(input: UploadImageInput): Promise<UploadedImag
 export async function uploadImageToPath(
   folderPath: string,
   file: File,
-  bucket: StorageBucketKey = "site"
+  bucket: StorageBucketKey = "site",
+  authToken?: string
 ): Promise<UploadedImage> {
   const fileDataBase64 = await readFileAsBase64(file);
 
@@ -503,7 +660,7 @@ export async function uploadImageToPath(
       contentType: file.type,
       fileDataBase64,
     },
-    { bucket }
+    { bucket, authToken }
   );
 
   if (!payload.path || !payload.url) {
@@ -519,7 +676,8 @@ export async function uploadImageToPath(
 export async function createFolder(
   parentPath: string,
   name: string,
-  bucket: StorageBucketKey = "site"
+  bucket: StorageBucketKey = "site",
+  authToken?: string
 ): Promise<string> {
   const payload = await postStorageOperation<{ path?: string }>(
     {
@@ -527,7 +685,7 @@ export async function createFolder(
       parentPath,
       newName: name,
     },
-    { bucket }
+    { bucket, authToken }
   );
 
   if (!payload.path) {
@@ -540,7 +698,8 @@ export async function createFolder(
 export async function renameFolder(
   folderPath: string,
   name: string,
-  bucket: StorageBucketKey = "site"
+  bucket: StorageBucketKey = "site",
+  authToken?: string
 ): Promise<string> {
   const payload = await postStorageOperation<{ path?: string }>(
     {
@@ -548,7 +707,7 @@ export async function renameFolder(
       folderPath,
       newName: name,
     },
-    { bucket }
+    { bucket, authToken }
   );
 
   if (!payload.path) {
@@ -558,20 +717,25 @@ export async function renameFolder(
   return payload.path;
 }
 
-export async function deleteFolder(folderPath: string, bucket: StorageBucketKey = "site"): Promise<void> {
+export async function deleteFolder(
+  folderPath: string,
+  bucket: StorageBucketKey = "site",
+  authToken?: string
+): Promise<void> {
   await postStorageOperation<{ ok?: boolean }>(
     {
       operation: "deleteFolder",
       folderPath,
     },
-    { bucket }
+    { bucket, authToken }
   );
 }
 
 export async function renameFile(
   filePath: string,
   name: string,
-  bucket: StorageBucketKey = "site"
+  bucket: StorageBucketKey = "site",
+  authToken?: string
 ): Promise<string> {
   const payload = await postStorageOperation<{ path?: string }>(
     {
@@ -579,7 +743,7 @@ export async function renameFile(
       filePath,
       newName: name,
     },
-    { bucket }
+    { bucket, authToken }
   );
 
   if (!payload.path) {
@@ -589,13 +753,17 @@ export async function renameFile(
   return payload.path;
 }
 
-export async function deleteFile(filePath: string, bucket: StorageBucketKey = "site"): Promise<void> {
+export async function deleteFile(
+  filePath: string,
+  bucket: StorageBucketKey = "site",
+  authToken?: string
+): Promise<void> {
   await postStorageOperation<{ ok?: boolean }>(
     {
       operation: "deleteFile",
       filePath,
     },
-    { bucket }
+    { bucket, authToken }
   );
 }
 
@@ -622,6 +790,6 @@ export async function notifyAccess(path: string): Promise<void> {
   }
 }
 
-export async function getBucketSizes(): Promise<BucketSizes> {
-  return fetchJson<BucketSizes>(BUCKET_SIZE_URL);
+export async function getBucketSizes(authToken?: string): Promise<BucketSizes> {
+  return fetchJson<BucketSizes>(BUCKET_SIZE_URL, { method: "GET" }, authToken);
 }

@@ -1,7 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { motion, useMotionValueEvent, useScroll } from "framer-motion";
-import { Camera, Menu, X } from "lucide-react";
+import { Camera, Menu, Settings, X } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useIsAdminAuthenticated } from "@/hooks/useAdminAuth";
+
 const navItems = [
   { label: "Inicio", href: "#home" },
   { label: "Álbuns", href: "#albuns" },
@@ -18,6 +20,11 @@ const Header = () => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [hidden, setHidden] = useState(false);
   const { scrollY } = useScroll();
+  const isAdminAuthenticated = useIsAdminAuthenticated();
+
+  const items = isAdminAuthenticated
+    ? [...navItems, { label: "Admin", href: "/admin" }]
+    : navItems;
 
   useMotionValueEvent(scrollY, "change", (latest) => {
     const previous = scrollY.getPrevious() ?? 0;
@@ -40,35 +47,57 @@ const Header = () => {
         Mônica Lima
       </a>
 
-      {/* Desktop nav */}
-      <nav className="hidden md:flex gap-8 text-[13px] font-medium tracking-[0.2em] uppercase">
-        {navItems.map((item) => (
-          isRoute(item.href) ? (
-            <Link
-              key={item.href}
-              to={item.href}
-              className="text-muted-foreground hover:text-foreground transition-colors duration-200"
-            >
-              {item.label}
-            </Link>
-          ) : (
-            <a
-              key={item.href}
-              href={item.href}
-              className="text-muted-foreground hover:text-foreground transition-colors duration-200"
-            >
-              {item.label}
-            </a>
-          )
-        ))}
-      </nav>
+      <div className="hidden md:flex items-center gap-8">
+        <nav className="flex gap-8 text-[13px] font-medium tracking-[0.2em] uppercase">
+          {items.map((item) => (
+            isRoute(item.href) ? (
+              <Link
+                key={item.href}
+                to={item.href}
+                className="text-muted-foreground hover:text-foreground transition-colors duration-200"
+              >
+                {item.label}
+              </Link>
+            ) : (
+              <a
+                key={item.href}
+                href={item.href}
+                className="text-muted-foreground hover:text-foreground transition-colors duration-200"
+              >
+                {item.label}
+              </a>
+            )
+          ))}
+        </nav>
 
-      {/* Mobile hamburger */}
-      <button onClick={() => setMenuOpen(!menuOpen)} className="md:hidden text-foreground">
-        {menuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-      </button>
+        {isAdminAuthenticated && (
+          <Link
+            to="/admin"
+            aria-label="Configuração do site"
+            title="Configuração do site"
+            className="text-muted-foreground hover:text-foreground transition-colors duration-200"
+          >
+            <Settings className="h-5 w-5" strokeWidth={1.75} />
+          </Link>
+        )}
+      </div>
 
-      {/* Mobile menu */}
+      <div className="flex items-center gap-3 md:hidden">
+        {isAdminAuthenticated && (
+          <Link
+            to="/admin"
+            aria-label="Configuração do site"
+            title="Configuração do site"
+            className="text-foreground"
+          >
+            <Settings className="w-5 h-5" strokeWidth={1.75} />
+          </Link>
+        )}
+        <button onClick={() => setMenuOpen(!menuOpen)} className="text-foreground" aria-label="Menu">
+          {menuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+        </button>
+      </div>
+
       {menuOpen && (
         <motion.div
           initial={{ opacity: 0, y: -10 }}
@@ -85,7 +114,7 @@ const Header = () => {
             </div>
           </div>
 
-          {navItems.map((item) => (
+          {items.map((item) => (
             isRoute(item.href) ? (
               <Link
                 key={item.href}

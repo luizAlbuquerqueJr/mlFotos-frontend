@@ -31,6 +31,11 @@ jobs:
         run: npm ci
 
       - name: Build
+        env:
+          VITE_FIREBASE_API_KEY: AIzaSyDEpRDMFat4qPUsk0ORjV7i4xRF7UkpYME
+          VITE_FIREBASE_AUTH_DOMAIN: ml-fotografia.firebaseapp.com
+          VITE_FIREBASE_PROJECT_ID: ml-fotografia
+          VITE_FIREBASE_APP_ID: 1:627184263016:web:85feaf5e93167076d240dd
         run: npm run build
 
       - name: Upload artifact

@@ -1,56 +1,45 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { ChevronRight, FileUp, FolderPlus, Loader2, Pencil, Trash2, User } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { ChevronRight, FileUp, FolderPlus, Loader2, LogOut, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import ImageCropDialog from "@/components/ImageCropDialog";
+import AdminClientsPanel from "@/components/admin/AdminClientsPanel";
 import { useToast } from "@/hooks/use-toast";
+import {
+  AdminAuthError,
+  ensureAdminUploadToken,
+  getAdminUploadTokenIfAuthenticated,
+  logoutAdmin,
+} from "@/lib/firebaseAuth";
 import { cropImageFile, type CropAreaPixels } from "@/lib/imageCrop";
 import {
   buildManifest,
-  createUser,
   createFolder,
   deleteFile,
-  deleteUser,
   deleteFolder,
-  getUserById,
-  listUsers,
   listManagerPath,
   renameFile,
   renameFolder,
-  updateUser,
   getBucketSizes,
   type StorageBucketKey,
-  type UserRecord,
   type ManagerFileItem,
   type ManagerFolderItem,
   type BucketSizes,
   uploadImageToPath,
 } from "@/lib/api";
 
-const WhatsAppIcon = ({ className }: { className?: string }) => (
-  <svg
-    viewBox="0 0 32 32"
-    fill="currentColor"
-    xmlns="http://www.w3.org/2000/svg"
-    className={className}
-    aria-hidden="true"
-    focusable="false"
-  >
-    <path d="M16 3C8.84 3 3 8.676 3 15.67c0 2.791.94 5.36 2.522 7.446L4 29l5.99-1.497A13.267 13.267 0 0 0 16 28.34c7.16 0 13-5.676 13-12.67C29 8.676 23.16 3 16 3Zm0 23.004c-2.03 0-4.01-.53-5.728-1.53l-.412-.242-3.55.887.95-3.37-.269-.42A10.88 10.88 0 0 1 5.12 15.67C5.12 9.85 10.024 5.1 16 5.1c5.976 0 10.88 4.75 10.88 10.57 0 5.82-4.904 10.334-10.88 10.334Zm6.117-7.743c-.334-.166-1.97-.957-2.274-1.066-.305-.11-.527-.166-.75.166-.222.333-.86 1.066-1.055 1.285-.195.222-.389.25-.723.083-.334-.166-1.41-.512-2.685-1.632-.992-.86-1.662-1.922-1.857-2.255-.195-.333-.02-.513.146-.679.151-.151.334-.389.5-.583.166-.195.222-.333.334-.555.11-.222.055-.417-.028-.583-.083-.166-.75-1.785-1.028-2.447-.27-.646-.545-.558-.75-.568l-.64-.013a1.23 1.23 0 0 0-.89.416c-.305.333-1.166 1.121-1.166 2.73 0 1.609 1.194 3.163 1.36 3.385.166.222 2.35 3.58 5.688 5.02.794.334 1.414.533 1.897.683.797.244 1.524.21 2.098.128.64-.096 1.97-.791 2.247-1.555.278-.763.278-1.414.195-1.555-.083-.138-.305-.222-.64-.389Z" />
-  </svg>
-);
-
 const Admin = () => {
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const [authChecking, setAuthChecking] = useState(true);
+  const [adminAuthorized, setAdminAuthorized] = useState(false);
   const [currentPath, setCurrentPath] = useState("");
   const [bucket, setBucket] = useState<StorageBucketKey>("site");
   const [folders, setFolders] = useState<ManagerFolderItem[]>([]);
   const [files, setFiles] = useState<ManagerFileItem[]>([]);
-  const [users, setUsers] = useState<UserRecord[]>([]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [currentClientName, setCurrentClientName] = useState<string>("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadingCount, setUploadingCount] = useState(0);
   const [bucketSizes, setBucketSizes] = useState<BucketSizes | null>(null);
@@ -65,35 +54,109 @@ const Admin = () => {
   const cropResolveRef = useRef<((file: File) => void) | null>(null);
   const cropRejectRef = useRef<((reason?: unknown) => void) | null>(null);
 
+  const denyAccessAndGoHome = useCallback(
+    (description?: string) => {
+      toast({
+        variant: "destructive",
+        title: "Você não está autenticado",
+        description: description ?? "Não foi possível acessar a área administrativa.",
+        duration: 8000,
+      });
+      setAdminAuthorized(false);
+      navigate("/", { replace: true });
+    },
+    [navigate, toast]
+  );
+
   useEffect(() => {
     let cancelled = false;
 
     const run = async () => {
+      try {
+        const token = await getAdminUploadTokenIfAuthenticated();
+        if (cancelled) return;
+        setAdminAuthorized(Boolean(token));
+      } catch {
+        if (cancelled) return;
+        denyAccessAndGoHome();
+      } finally {
+        if (!cancelled) {
+          setAuthChecking(false);
+        }
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [denyAccessAndGoHome]);
+
+  const getAuthToken = useCallback(async (): Promise<string> => {
+    try {
+      return await ensureAdminUploadToken();
+    } catch {
+      denyAccessAndGoHome();
+      throw new AdminAuthError();
+    }
+  }, [denyAccessAndGoHome]);
+
+  const handleAdminLogin = async () => {
+    try {
+      setAuthChecking(true);
+      await ensureAdminUploadToken();
+      setAdminAuthorized(true);
+    } catch {
+      denyAccessAndGoHome();
+    } finally {
+      setAuthChecking(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logoutAdmin();
+      setAdminAuthorized(false);
+      toast({
+        title: "Logout realizado",
+        description: "Você foi desconectado com sucesso.",
+      });
+    } catch (error) {
+      if (error instanceof AdminAuthError) return;
+      toast({
+        variant: "destructive",
+        title: "Erro ao fazer logout",
+        description: error instanceof Error ? error.message : "Falha ao desconectar.",
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (authChecking || !adminAuthorized) return;
+
+    let cancelled = false;
+
+    const run = async () => {
+      if (bucket === "clientes") {
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
-      const isUsersRoot = bucket === "clientes" && currentPath === "clientes";
 
       try {
-        if (isUsersRoot) {
-          const data = await listUsers();
-          if (cancelled) return;
-          setUsers(data);
-          setFolders([]);
-          setFiles([]);
-          return;
-        }
-
-        const data = await listManagerPath(currentPath, bucket);
+        const token = await getAuthToken();
+        const data = await listManagerPath(currentPath, bucket, token);
         if (cancelled) return;
         setFolders(data.folders);
         setFiles(data.files);
-        setUsers([]);
       } catch (error) {
         if (cancelled) return;
-        const isUsersRootNow = bucket === "clientes" && currentPath === "clientes";
-        console.error(isUsersRootNow ? "Failed to load users" : "Failed to load manager", error);
+        if (error instanceof AdminAuthError) return;
+        console.error("Failed to load manager", error);
         toast({
           variant: "destructive",
-          title: isUsersRootNow ? "Erro ao carregar usuários" : "Erro ao carregar gerenciador",
+          title: "Erro ao carregar gerenciador",
           description: error instanceof Error ? error.message : "Falha ao carregar dados.",
         });
       } finally {
@@ -105,48 +168,17 @@ const Admin = () => {
     return () => {
       cancelled = true;
     };
-  }, [bucket, currentPath, toast]);
-
-  const currentClientId = useMemo(() => {
-    if (bucket !== "clientes") return "";
-    if (!currentPath.startsWith("clientes/")) return "";
-
-    const parts = currentPath.split("/").filter(Boolean);
-    return parts.length >= 2 ? parts[1] : "";
-  }, [bucket, currentPath]);
+  }, [authChecking, adminAuthorized, bucket, currentPath, toast, getAuthToken]);
 
   useEffect(() => {
-    let cancelled = false;
+    if (authChecking || !adminAuthorized) return;
 
-    const run = async () => {
-      if (!currentClientId) {
-        setCurrentClientName("");
-        return;
-      }
-
-      try {
-        const user = await getUserById(currentClientId);
-        if (cancelled) return;
-        setCurrentClientName(user.name);
-      } catch (error) {
-        if (cancelled) return;
-        console.error("Failed to load client name", error);
-        setCurrentClientName("");
-      }
-    };
-
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentClientId]);
-
-  useEffect(() => {
     let cancelled = false;
 
     const run = async () => {
       try {
-        const sizes = await getBucketSizes();
+        const token = await getAuthToken();
+        const sizes = await getBucketSizes(token);
         if (cancelled) return;
         setBucketSizes(sizes);
       } catch (error) {
@@ -159,7 +191,46 @@ const Admin = () => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authChecking, adminAuthorized, getAuthToken]);
+
+  if (authChecking) {
+    return (
+      <main className="min-h-screen bg-background px-6 py-10 md:px-10">
+        <div className="mx-auto max-w-5xl">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Validando acesso administrativo...
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (!adminAuthorized) {
+    return (
+      <main className="min-h-screen bg-background px-6 py-10 md:px-10">
+        <div className="mx-auto flex max-w-md flex-col gap-4 rounded-xl border border-border/60 bg-card p-6">
+          <h1 className="text-lg font-semibold text-foreground">Acesso administrativo</h1>
+          <p className="text-sm text-muted-foreground">
+            Faça login com sua conta Google autorizada para acessar o painel de administração.
+          </p>
+          <Button onClick={handleAdminLogin} disabled={authChecking}>
+            {authChecking ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Iniciando login...
+              </>
+            ) : (
+              "Entrar com Google"
+            )}
+          </Button>
+          <Button asChild variant="ghost">
+            <Link to="/">Voltar para o site</Link>
+          </Button>
+        </div>
+      </main>
+    );
+  }
 
   const canCreateFolder =
     (bucket === "site" && (currentPath === "albuns" || currentPath.startsWith("albuns/"))) ||
@@ -176,36 +247,26 @@ const Admin = () => {
     return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
   };
 
-  const breadcrumbs = useMemo(() => {
-    if (!currentPath) return [] as string[];
-    return currentPath.split("/").filter(Boolean);
-  }, [currentPath]);
+  const breadcrumbs = currentPath ? currentPath.split("/").filter(Boolean) : [];
 
   const refresh = async () => {
-    const isUsersRoot = bucket === "clientes" && currentPath === "clientes";
-    if (isUsersRoot) {
-      const data = await listUsers();
-      setUsers(data);
-      setFolders([]);
-      setFiles([]);
-      return;
-    }
-
-    const data = await listManagerPath(currentPath, bucket);
+    const token = await getAuthToken();
+    const data = await listManagerPath(currentPath, bucket, token);
     setFolders(data.folders);
     setFiles(data.files);
-    setUsers([]);
   };
 
   const handleDeploy = async () => {
     setBusy(true);
     try {
-      const url = await buildManifest();
+      const token = await getAuthToken();
+      const url = await buildManifest(token);
       toast({
         title: "Deploy concluído",
         description: url,
       });
     } catch (error) {
+      if (error instanceof AdminAuthError) return;
       toast({
         variant: "destructive",
         title: "Erro no deploy",
@@ -223,6 +284,9 @@ const Admin = () => {
     if (name.endsWith("__preview.webp")) {
       return name.replace(/__preview\.webp$/i, "");
     }
+    if (name.endsWith("__watermark.webp")) {
+      return name.replace(/__watermark\.webp$/i, "");
+    }
 
     const dotIndex = name.lastIndexOf(".");
     if (dotIndex > 0) {
@@ -236,16 +300,6 @@ const Admin = () => {
     const normalized = String(path || "").replace(/\\/g, "/");
     const idx = normalized.lastIndexOf("/");
     return idx >= 0 ? normalized.slice(0, idx) : "";
-  };
-
-  const handleShareUserWhatsapp = (user: UserRecord) => {
-    const url = `${window.location.origin}/clientes?id=${encodeURIComponent(user.id)}`;
-    const text = `Olá! 
-Aqui está o link para acessar suas fotos: ${url}.  
-Recomendamos dar uma olhada na seção “Boas práticas para arrasar nas redes sociais” para aproveitar ainda mais suas imagens.  
-E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotografia. Vamos adorar ver suas fotos por lá!`;
-    const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
-    window.open(whatsappUrl, "_blank", "noopener,noreferrer");
   };
 
    const requestCrop = async (file: File, opts: { aspect: number; title: string }): Promise<File> => {
@@ -289,6 +343,13 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
     const aspect = isHome ? 9 / 16 : 4 / 5;
     const title = isHome ? "Cortar imagem (Home 9:16)" : "Cortar imagem (Álbum 4:5)";
 
+    let authToken = "";
+    try {
+      authToken = await getAuthToken();
+    } catch {
+      return;
+    }
+
     setBusy(true);
     setUploadProgress(0);
     setUploadingCount(pickedFiles.length);
@@ -301,7 +362,7 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
       if (isClientUpload) {
         const uploadFile = async (file: File) => {
           try {
-            await uploadImageToPath(currentPath, file, bucket);
+            await uploadImageToPath(currentPath, file, bucket, authToken);
           } catch (error) {
             failures += 1;
             throw error;
@@ -321,7 +382,7 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
         for (const file of pickedFiles) {
           try {
             const prepared = await requestCrop(file, { aspect, title });
-            await uploadImageToPath(currentPath, prepared, bucket);
+            await uploadImageToPath(currentPath, prepared, bucket, authToken);
           } catch (error) {
             failures += 1;
           } finally {
@@ -338,6 +399,7 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
         description: failures > 0 ? `${failures} arquivo(s) falharam.` : undefined,
       });
     } catch (error) {
+      if (error instanceof AdminAuthError) return;
       toast({
         variant: "destructive",
         title: "Erro no upload",
@@ -355,61 +417,16 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
 
     setBusy(true);
     try {
-      const normalized = folderName.trim();
-      const isUsersRoot = bucket === "clientes" && currentPath === "clientes";
-
-      if (isUsersRoot) {
-        await createUser(normalized);
-      } else {
-        await createFolder(currentPath, normalized, bucket);
-      }
+      const token = await getAuthToken();
+      await createFolder(currentPath, folderName.trim(), bucket, token);
       await refresh();
-      toast({ title: isUsersRoot ? "Usuário criado" : "Pasta criada" });
+      toast({ title: "Pasta criada" });
     } catch (error) {
+      if (error instanceof AdminAuthError) return;
       toast({
         variant: "destructive",
-        title: bucket === "clientes" && currentPath === "clientes" ? "Erro ao criar usuário" : "Erro ao criar pasta",
+        title: "Erro ao criar pasta",
         description: error instanceof Error ? error.message : "Falha ao criar.",
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleRenameUser = async (user: UserRecord) => {
-    const newName = window.prompt("Novo nome do cliente:", user.name);
-    if (!newName || newName.trim() === user.name) return;
-
-    setBusy(true);
-    try {
-      await updateUser(user.id, { name: newName.trim() });
-      await refresh();
-      toast({ title: "Usuário atualizado" });
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Erro ao atualizar usuário",
-        description: error instanceof Error ? error.message : "Falha ao atualizar.",
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleDeleteUser = async (user: UserRecord) => {
-    const ok = window.confirm(`Apagar o usuário '${user.name}' e todas as fotos?`);
-    if (!ok) return;
-
-    setBusy(true);
-    try {
-      await deleteUser(user.id);
-      await refresh();
-      toast({ title: "Usuário apagado" });
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Erro ao apagar usuário",
-        description: error instanceof Error ? error.message : "Falha ao apagar.",
       });
     } finally {
       setBusy(false);
@@ -422,10 +439,12 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
 
     setBusy(true);
     try {
-      await renameFolder(folder.path, newName.trim(), bucket);
+      const token = await getAuthToken();
+      await renameFolder(folder.path, newName.trim(), bucket, token);
       await refresh();
       toast({ title: "Pasta renomeada" });
     } catch (error) {
+      if (error instanceof AdminAuthError) return;
       toast({
         variant: "destructive",
         title: "Erro ao renomear pasta",
@@ -442,10 +461,12 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
 
     setBusy(true);
     try {
-      await deleteFolder(folder.path, bucket);
+      const token = await getAuthToken();
+      await deleteFolder(folder.path, bucket, token);
       await refresh();
       toast({ title: "Pasta apagada" });
     } catch (error) {
+      if (error instanceof AdminAuthError) return;
       toast({
         variant: "destructive",
         title: "Erro ao apagar pasta",
@@ -462,10 +483,12 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
 
     setBusy(true);
     try {
-      await renameFile(file.path, newName.trim(), bucket);
+      const token = await getAuthToken();
+      await renameFile(file.path, newName.trim(), bucket, token);
       await refresh();
       toast({ title: "Arquivo renomeado" });
     } catch (error) {
+      if (error instanceof AdminAuthError) return;
       toast({
         variant: "destructive",
         title: "Erro ao renomear arquivo",
@@ -490,6 +513,7 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
 
       const thumbName = `${base}__thumb.webp`;
       const previewName = `${base}__preview.webp`;
+      const watermarkName = `${base}__watermark.webp`;
 
       for (const candidate of files) {
         if (!candidate.path.startsWith(prefix)) continue;
@@ -497,6 +521,9 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
           targets.set(candidate.path, candidate);
         }
         if (candidate.name === previewName) {
+          targets.set(candidate.path, candidate);
+        }
+        if (candidate.name === watermarkName) {
           targets.set(candidate.path, candidate);
         }
         if (candidate.name.startsWith(`${base}.`) && !candidate.name.includes("__")) {
@@ -508,10 +535,12 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
         targets.set(file.path, file);
       }
 
-      await Promise.all(Array.from(targets.keys()).map((path) => deleteFile(path, bucket)));
+      const token = await getAuthToken();
+      await Promise.all(Array.from(targets.keys()).map((path) => deleteFile(path, bucket, token)));
       await refresh();
       toast({ title: "Arquivo apagado" });
     } catch (error) {
+      if (error instanceof AdminAuthError) return;
       toast({
         variant: "destructive",
         title: "Erro ao apagar arquivo",
@@ -526,16 +555,23 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
     <main className="min-h-screen bg-background px-6 py-10 md:px-10">
       <div className="mx-auto max-w-5xl space-y-6">
         <header className="space-y-2">
-          <p className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Painel administrativo</p>
-          <h1 className="text-3xl" style={{ fontFamily: "var(--font-serif)" }}>
-            Gerenciador de arquivos
-          </h1>
-
-          {bucket === "clientes" && currentClientId && currentClientName && (
-            <p className="text-sm text-muted-foreground">
-              Cliente: <span className="text-foreground">{currentClientName}</span>
-            </p>
-          )}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.25em] text-muted-foreground">Painel administrativo</p>
+              <h1 className="text-3xl" style={{ fontFamily: "var(--font-serif)" }}>
+                {bucket === "clientes" ? "Clientes" : "Gerenciador de arquivos"}
+              </h1>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleLogout}
+              className="gap-2"
+            >
+              <LogOut className="h-4 w-4" />
+              Sair
+            </Button>
+          </div>
 
           {bucketSizes && (
             <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
@@ -605,6 +641,10 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
           )}
         </header>
 
+        {bucket === "clientes" ? (
+          <AdminClientsPanel />
+        ) : (
+          <>
         <section className="rounded-lg border border-border/60 bg-card p-5 space-y-4">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <Button size="sm" variant="outline" onClick={() => setCurrentPath("")}
@@ -653,59 +693,6 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
                 Carregando...
               </li>
             )}
-
-            {bucket === "clientes" && currentPath === "clientes" &&
-              users.map((user) => (
-                <li
-                  key={user.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded border border-border/40 px-3 py-2"
-                >
-                  <span className="flex items-center gap-2 text-left text-sm">
-                    <User className="h-4 w-4" />
-                    {user.name}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="rounded-md border border-border/40 p-2 hover:bg-accent disabled:opacity-50"
-                      onClick={() => handleShareUserWhatsapp(user)}
-                      aria-label="Compartilhar no WhatsApp"
-                      type="button"
-                      disabled={busy}
-                      title="Compartilhar link no WhatsApp"
-                    >
-                      <WhatsAppIcon className="h-4 w-4" />
-                    </button>
-
-                    <button
-                      className="rounded-md border border-border/40 p-2 hover:bg-accent"
-                      onClick={() => setCurrentPath(`clientes/${user.id}`)}
-                      aria-label="Abrir usuário"
-                      type="button"
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </button>
-
-                    <button
-                      className="rounded-md border border-border/40 p-2 hover:bg-accent disabled:opacity-50"
-                      onClick={() => handleRenameUser(user)}
-                      aria-label="Renomear usuário"
-                      type="button"
-                      disabled={busy}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </button>
-                    <button
-                      className="rounded-md border border-border/40 p-2 hover:bg-accent disabled:opacity-50"
-                      onClick={() => handleDeleteUser(user)}
-                      aria-label="Apagar usuário"
-                      type="button"
-                      disabled={busy}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </li>
-              ))}
 
             {folders.map((folder) => {
               const isRoot = folder.path === "home" || folder.path === "albuns" || folder.path === "clientes";
@@ -756,7 +743,7 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
               );
             })}
 
-            {folders.length === 0 && users.length === 0 && !loading && (
+            {folders.length === 0 && !loading && (
               <li className="text-sm text-muted-foreground">Nenhuma pasta encontrada.</li>
             )}
           </ul>
@@ -797,6 +784,8 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
             <p className="text-sm text-muted-foreground">Nenhuma imagem neste diretório.</p>
           )}
         </section>
+          </>
+        )}
       </div>
 
       <input
@@ -814,7 +803,7 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
         }}
       />
 
-      {canUploadToPath && (
+      {bucket === "site" && canUploadToPath && (
         <button
           type="button"
           aria-label="Upload"
@@ -831,7 +820,7 @@ E quando for compartilhar, não esqueça de marcar a gente: @monicalima.fotograf
         </button>
       )}
 
-      {canCreateFolder && (
+      {bucket === "site" && canCreateFolder && (
         <button
           type="button"
           aria-label="Criar pasta"

@@ -61,3 +61,56 @@ html {
   scroll-behavior: smooth;
   overflow-x: hidden;
 }
+
+@keyframes coupon-wiggle {
+  0%,
+  100% {
+    transform: rotate(calc(var(--coupon-rotate, 3deg) * -1));
+  }
+  50% {
+    transform: rotate(var(--coupon-rotate, 3deg));
+  }
+}
+
+@keyframes coupon-pop {
+  0% {
+    transform: scale(0.9) rotate(-6deg);
+  }
+  60% {
+    transform: scale(1.06) rotate(2deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+.coupon-wiggle {
+  transform-origin: 50% 55%;
+  animation: coupon-wiggle var(--coupon-duration, 1.8s) ease-in-out infinite;
+}
+
+.coupon-unlocked {
+  animation: coupon-pop 0.65s ease-out;
+}
+
+.coupon-note-eager {
+  animation: coupon-note-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes coupon-note-pulse {
+  0%,
+  100% {
+    opacity: 0.88;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coupon-wiggle,
+  .coupon-unlocked,
+  .coupon-note-eager {
+    animation: none;
+  }
+}

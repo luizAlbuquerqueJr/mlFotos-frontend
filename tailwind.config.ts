@@ -66,6 +66,16 @@ export default {
           from: { height: "var(--radix-accordion-content-height)" },
           to: { height: "0" },
         },
+        "coupon-wiggle": {
+          "0%, 100%": { transform: "rotate(calc(var(--coupon-rotate) * -1)) translateY(0)" },
+          "25%": { transform: "rotate(var(--coupon-rotate)) translateY(-3px) scale(1.04)" },
+          "50%": { transform: "rotate(calc(var(--coupon-rotate) * -0.7)) translateY(0)" },
+          "75%": { transform: "rotate(calc(var(--coupon-rotate) * 0.85)) translateY(-2px)" },
+        },
+        "coupon-glow": {
+          "0%, 100%": { opacity: "0.55" },
+          "50%": { opacity: "1" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
