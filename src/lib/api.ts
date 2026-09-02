@@ -91,7 +91,7 @@ async function fetchJson<T>(url: string, init?: RequestInit, authToken?: string)
   return (await response.json()) as T;
 }
 
-function parsePhoto(raw: unknown, clientId: string): ClientPhoto | null {
+function parsePhoto(raw: unknown, clientId: string, originalsUnlocked = false): ClientPhoto | null {
   if (!raw || typeof raw !== "object") return null;
   const photo = raw as Record<string, unknown>;
   if (typeof photo.id !== "string" || typeof photo.name !== "string") return null;
@@ -100,7 +100,7 @@ function parsePhoto(raw: unknown, clientId: string): ClientPhoto | null {
     id: photo.id,
     name: photo.name,
     previewUrl: getClientPhotoPreviewUrl(clientId, photo.id),
-    originalUrl: status === "released" ? getClientPhotoFileUrl(clientId, photo.id) : "",
+    originalUrl: status === "released" || originalsUnlocked ? getClientPhotoFileUrl(clientId, photo.id) : "",
     status,
     favorited: Boolean(photo.favorited),
   };
@@ -110,9 +110,10 @@ function parseClientPackage(raw: unknown): ClientPackage | null {
   if (!raw || typeof raw !== "object") return null;
   const user = raw as Record<string, unknown>;
   if (typeof user.id !== "string" || typeof user.name !== "string") return null;
+  const photoSelectionEnabled = user.photoSelectionEnabled === true;
   const photos = Array.isArray(user.photos)
     ? user.photos
-        .map((photo) => parsePhoto(photo, user.id))
+        .map((photo) => parsePhoto(photo, user.id, !photoSelectionEnabled))
         .filter((photo): photo is ClientPhoto => Boolean(photo))
     : [];
   return {
@@ -121,7 +122,7 @@ function parseClientPackage(raw: unknown): ClientPackage | null {
     contract: normalizeClientContract(user.contract as Partial<ClientContract> | undefined),
     photos,
     selectionSubmittedAt: typeof user.selectionSubmittedAt === "string" ? user.selectionSubmittedAt : undefined,
-    photoSelectionEnabled: user.photoSelectionEnabled === true,
+    photoSelectionEnabled,
   };
 }
 

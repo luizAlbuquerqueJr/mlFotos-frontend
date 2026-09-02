@@ -131,11 +131,11 @@ export function ClientPhotosExperience({
       cover: viewerPhotos[0]?.previewUrl ?? "",
       photos: viewerPhotos.map((photo) => ({
         src: photo.previewUrl,
-        originalSrc: photo.status === "released" ? photo.originalUrl : "",
+        originalSrc: !canSelect || photo.status === "released" ? photo.originalUrl : "",
         alt: photo.name,
       })),
     };
-  }, [client.id, client.name, viewerPhotos]);
+  }, [canSelect, client.id, client.name, viewerPhotos]);
 
   const openViewer = (photos: ClientPhoto[], photo: ClientPhoto) => {
     setViewerPhotos(photos);
